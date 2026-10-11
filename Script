@@ -16,7 +16,7 @@ local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local genv = (getgenv and getgenv()) or _G
 
-local VERSION = "v1.26.5"
+local VERSION = "v1.26.6"
 
 for _, env in ipairs({genv, _G}) do
     local old = env.StrawberryUnload
@@ -2057,6 +2057,13 @@ do
             local ok = H.calibrateHunger and H.calibrateHunger()
             calBtn.Text = ok and "Saved! Full = 100%" or "Hunger bar not found"
             task.delay(1.5, function() calBtn.Text = "I'm Full Now (fix hunger %)" end)
+        end)
+        local dbgBtn = createButton(survive, "Copy Hunger Info (send to dev)")
+        dbgBtn.Activated:Connect(function()
+            local okd, txt = pcall(function() return H.hungerDebug and H.hungerDebug() or "no info" end)
+            local okc = okd and setclipboard ~= nil and pcall(setclipboard, txt)
+            dbgBtn.Text = okc and "Copied!" or "Couldn't copy"
+            task.delay(1.5, function() dbgBtn.Text = "Copy Hunger Info (send to dev)" end)
         end)
         createSlider(survive, "Start Eating Below (hunger %)", 5, 99, 90, "%", function(v) S.eatStart = v end, "eatStart")
         createSlider(survive, "Eat Speed (E presses / sec)", 2, 30, 12, "", function(v) S.eatRate = v end, "eatRate")
@@ -7597,7 +7604,6 @@ end)
         return h >= 0.03 and h <= 0.11 and sat >= 0.5 and v >= 0.6
     end
     -- how wide the hunger bar can get ("its own space"), not the whole row it sits in
-    local userFull = nil   -- set by "I'm Full Now": how far the bar gets when you are full (0..1)
     local function slotWidth(f)
         local par = f.Parent :: any
         local fx, fy, fh = f.AbsolutePosition.X, f.AbsolutePosition.Y, f.AbsoluteSize.Y
@@ -7727,51 +7733,312 @@ end)
     --   * "I'm Full Now" saves it, and
     --   * while auto eating, if the bar went up and then stops going up for a few seconds, that is your full.
     -- If the bar ever goes past it (you grew), "full" moves up with it.
-    local learnedFull = nil
-    local lastRaw, lastRiseT, rose = nil, 0, false
-    local function fullPoint()
-        return userFull or learnedFull
-    end
-    local function hungerFrac()
-        local raw = rawHunger()
-        if not raw then return nil end
-        local now = os.clock()
-        if H.eatingActive then
-            if lastRaw and raw > lastRaw + 0.004 then
-                rose, lastRiseT = true, now
+    --
+    -- LIVE reading: the script watches every part of the game's hunger bar (fill width, fill position,
+    -- size, sprite, gradient, the number) and follows the part that actually MOVES when you get hungry /
+    -- eat. A part that never changes (a background, a frame) can't get stuck at 100% any more.
+    local sigs = {}             -- {o = Instance, k = kind, key = string}
+    local stat = {}             -- key -> {lo, hi, n = changes, last, t = last change, up = rises while eating}
+    local sigNext = 0
+    local activeKey = nil
+    local savedKey = nil        -- the part that moved last time (saved in your config)
+    local calSnap = {}          -- "I'm Full Now": every value at the moment you were full
+    local learned = {}          -- key -> full value learned while eating
+    local calRaw = nil          -- old style fallback
+    local lastV, lastRiseT, rose = nil, 0, false
+
+    local function keyOf(o)
+        local parts = {}
+        local cur = o
+        while cur and cur ~= game and cur ~= playerGui and #parts < 14 do
+            local name = cur.Name
+            local par = cur.Parent
+            if par then
+                local idx, cnt = 0, 0
+                for _, c in ipairs(par:GetChildren()) do
+                    if c.Name == name then
+                        cnt = cnt + 1
+                        if c == cur then idx = cnt end
+                    end
+                end
+                if cnt > 1 then name = name .. "#" .. idx end
             end
-            if not lastRaw or raw > lastRaw or raw < lastRaw - 0.02 then lastRaw = raw end
-            if rose and now - lastRiseT > 5 and raw > 0.15 and not userFull then
-                learnedFull = raw          -- ate, the bar stopped rising: this is full
+            table.insert(parts, 1, name)
+            cur = par
+        end
+        return table.concat(parts, ".")
+    end
+    local function shortKey(key)
+        local k, path = string.match(key, "^(%a)|(.*)$")
+        local tail = path and (string.match(path, "([^%.]+%.[^%.]+)$") or path) or key
+        local what = ({w = "width", p = "position", s = "size", r = "sprite", g = "gradient", n = "number"})[k or ""] or "?"
+        return tail .. " " .. what
+    end
+    local function colorBias(o)
+        local okc, c = pcall(function()
+            if o:IsA("ImageLabel") or o:IsA("ImageButton") then return o.ImageColor3 end
+            if o:IsA("GuiObject") then return o.BackgroundColor3 end
+            return nil
+        end)
+        if not okc or not c then return 1 end
+        local h, sat, v = c:ToHSV()
+        if sat >= 0.45 and v >= 0.5 then
+            if h >= 0.03 and h <= 0.11 then return 2.5 end       -- orange: hunger
+            if h >= 0.5 and h <= 0.7 then return 0.25 end        -- blue: water
+            if h >= 0.22 and h <= 0.45 then return 0.4 end       -- green: health
+        end
+        return 1
+    end
+
+    local function addRoot(root, seen)
+        local list = {root}
+        for _, d in ipairs(root:GetDescendants()) do
+            list[#list + 1] = d
+            if #list > 80 then break end
+        end
+        for _, o in ipairs(list) do
+            if not seen[o] then
+                seen[o] = true
+                local kinds
+                if o:IsA("TextLabel") or o:IsA("TextBox") then kinds = {"n"}
+                elseif o:IsA("UIGradient") then kinds = {"g"}
+                elseif o:IsA("ImageLabel") then kinds = {"w", "p", "s", "r"}
+                elseif o:IsA("GuiObject") then kinds = {"w", "p", "s"}
+                else kinds = {} end
+                if #kinds > 0 then
+                    local base = keyOf(o)
+                    local bias = colorBias(o)
+                    for _, k in ipairs(kinds) do
+                        sigs[#sigs + 1] = {o = o, k = k, key = k .. "|" .. base, bias = bias}
+                    end
+                end
+            end
+        end
+    end
+    local function buildSigs()
+        sigs = {}
+        local seen = {}
+        for _, g in ipairs(playerGui:GetChildren()) do
+            if g:IsA("LayerCollector") and g.Enabled and not string.find(g.Name, "Strawberry", 1, true) then
+                for _, d in ipairs(g:GetDescendants()) do
+                    if d:IsA("GuiObject") and hungerName(d.Name) and #sigs < 600 then addRoot(d, seen) end
+                end
+            end
+        end
+        local ob = findOrangeBar and findOrangeBar()
+        if ob then addRoot(ob, seen) end
+    end
+    local function ensureSigs()
+        local now = os.clock()
+        local dead = false
+        for _, sg in ipairs(sigs) do
+            if not sg.o.Parent then dead = true; break end
+        end
+        if dead or now >= sigNext then
+            sigNext = now + 10
+            buildSigs()
+        end
+    end
+
+    local function sigValue(sg)
+        local o, k = sg.o, sg.k
+        if not o.Parent then return nil end
+        if k == "n" then
+            if not o.Visible then return nil end
+            local t = o.Text
+            local cur, mx = string.match(t, "(%d+%.?%d*)%s*/%s*(%d+%.?%d*)")
+            if cur then sg.def = 1; return (tonumber(cur) or 0) / math.max(tonumber(mx) or 1, 0.001) end
+            local pct = string.match(t, "^%s*(%d+%.?%d*)%s*%%%s*$")
+            if pct then sg.def = 1; return (tonumber(pct) or 0) / 100 end
+            local clean = string.gsub(t, "[%s,]", "")
+            local num = tonumber(clean)
+            if num then sg.def = nil; return num end
+            return nil
+        end
+        if k == "g" then return o.Offset.X end
+        if k == "s" then return o.Size.X.Scale end
+        if k == "r" then
+            local x = o.ImageRectSize.X
+            if x > 0 then return x end
+            return nil
+        end
+        local par = o.Parent
+        if not (o.Visible and par:IsA("GuiObject") and par.AbsoluteSize.X > 10) then return nil end
+        if k == "w" then return o.AbsoluteSize.X / par.AbsoluteSize.X end
+        if k == "p" then return (o.AbsolutePosition.X - par.AbsolutePosition.X) / par.AbsoluteSize.X end
+        return nil
+    end
+    local function track(sg, v, now)
+        local st = stat[sg.key]
+        if not st then
+            st = {lo = v, hi = v, n = 0, last = v, t = 0, up = 0}
+            stat[sg.key] = st
+            return st
+        end
+        if math.abs(v - st.last) > 0.0001 then
+            if v > st.last and H.eatingActive then st.up = st.up + 1 end
+            st.n = st.n + 1
+            st.t = now
+            st.last = v
+        end
+        if v < st.lo then st.lo = v end
+        if v > st.hi then st.hi = v end
+        return st
+    end
+    local function score(sg, st, now)
+        if st.n < 3 then return 0 end
+        local range = st.hi - st.lo
+        if (sg.k == "n" and not sg.def) or sg.k == "r" then range = range / math.max(math.abs(st.hi), 1) end
+        if range < 0.01 then return 0 end
+        local sc = range * math.min(st.n, 20) * (sg.bias or 1) * (1 + math.min(st.up, 10))
+        if sg.k == "p" or sg.k == "g" then sc = sc * 0.5 end
+        if sg.k == "s" then sc = sc * 0.9 end
+        if now - st.t > 180 then sc = sc * 0.3 end   -- moved once long ago (an animation), not hunger
+        return sc
+    end
+    local function emptyFull(sg, st)
+        local full = calSnap[sg.key] or learned[sg.key]
+        if not full then
+            local k = sg.k
+            if k == "w" then
+                full = 1
+                local slot = slotWidth(sg.o)
+                local par = sg.o.Parent
+                if slot and slot > 5 and par and par:IsA("GuiObject") and par.AbsoluteSize.X > 10 then
+                    full = math.clamp(slot / par.AbsoluteSize.X, 0.05, 1)
+                end
+            elseif k == "s" then full = 1
+            elseif k == "p" or k == "g" then full = 0
+            elseif k == "n" then full = sg.def or ((st.hi <= 100) and 100 or st.hi)
+            else full = st.hi end
+        end
+        local empty = (sg.k == "p" or sg.k == "g") and (full - 1) or 0
+        return empty, full
+    end
+
+    -- the moving part of the hunger bar, as 0..1 of YOUR full
+    local function liveHunger()
+        ensureSigs()
+        local now = os.clock()
+        local best, bestSc, bestV, bestSt = nil, 0, nil, nil
+        local saved, savedV, savedSt = nil, nil, nil
+        for _, sg in ipairs(sigs) do
+            local okv, v = pcall(sigValue, sg)
+            if okv and type(v) == "number" and v == v then
+                local st = track(sg, v, now)
+                local sc = score(sg, st, now)
+                if sg.key == activeKey then sc = sc * 1.3 end   -- don't flip between two parts
+                if sc > bestSc then best, bestSc, bestV, bestSt = sg, sc, v, st end
+                if sg.key == savedKey then saved, savedV, savedSt = sg, v, st end
+            end
+        end
+        if not best and saved then best, bestV, bestSt = saved, savedV, savedSt end
+        if not best or not bestSt then return nil end
+        if activeKey ~= best.key then
+            activeKey = best.key
+            savedKey = best.key
+            lastV, rose = nil, false
+        end
+        local v = bestV :: number
+        -- learn "full" while auto eating: the bar went up, then stopped going up
+        if H.eatingActive then
+            if lastV and v > lastV + 0.0001 then rose, lastRiseT = true, now end
+            if not lastV or v > lastV then lastV = v end
+            if lastV and v < lastV - math.abs(lastV) * 0.03 then lastV = v end
+            local e0 = emptyFull(best, bestSt)
+            if rose and now - lastRiseT > 5 and not calSnap[best.key] and v > e0 then
+                learned[best.key] = v
                 rose = false
             end
         else
-            rose, lastRaw = false, raw
+            rose, lastV = false, v
         end
-        local full = fullPoint()
-        if full and raw > full + 0.01 then  -- the bar went further than "full": you can hold more now
-            if userFull then userFull = raw else learnedFull = raw end
+        local empty, full = emptyFull(best, bestSt)
+        if v > full + math.abs(full - empty) * 0.01 then   -- went further than "full": you can hold more now
+            if calSnap[best.key] then calSnap[best.key] = v else learned[best.key] = v end
+            empty, full = emptyFull(best, bestSt)
+        end
+        if full - empty <= 0.0001 then return nil end
+        hungerSrc = "HUD live '" .. shortKey(best.key) .. "'"
+        return math.clamp((v - empty) / (full - empty), 0, 1)
+    end
+
+    local learnedRaw = nil
+    local function hungerFrac()
+        local okl, live = pcall(liveHunger)
+        if okl and live then return live end
+        -- nothing has moved yet: the old way
+        local raw = rawHunger()
+        if not raw then return nil end
+        local full = calRaw or learnedRaw
+        if full and raw > full + 0.01 then
+            if calRaw then calRaw = raw else learnedRaw = raw end
             full = raw
         end
-        if full and full > 0.05 then
-            return math.clamp(raw / full, 0, 1)
-        end
+        if full and full > 0.05 then return math.clamp(raw / full, 0, 1) end
         return raw
     end
     H.hungerLastRise = function() return lastRiseT end
     H.calibrateHunger = function()
-        local raw = rawHunger()
-        if raw and raw > 0.05 then
-            userFull = raw
-            learnedFull = nil
-            return true
+        pcall(ensureSigs)
+        local any = false
+        calSnap = {}
+        learned = {}
+        for _, sg in ipairs(sigs) do
+            local okv, v = pcall(sigValue, sg)
+            if okv and type(v) == "number" and v == v then
+                calSnap[sg.key] = v
+                any = true
+            end
         end
-        return false
+        local raw = rawHunger()
+        if raw and raw > 0.05 then calRaw = raw; any = true end
+        return any
+    end
+    -- for "Copy Hunger Info": what the script sees, so it can be fixed for your game
+    H.hungerDebug = function()
+        pcall(ensureSigs)
+        local now = os.clock()
+        local out = {"Strawberry Hub " .. VERSION .. " hunger info", "source: " .. tostring(hungerSrc),
+            "active: " .. tostring(activeKey), "eating: " .. tostring(H.eatingActive)}
+        local rows = {}
+        for _, sg in ipairs(sigs) do
+            local st = stat[sg.key]
+            if st then
+                local e, f = emptyFull(sg, st)
+                rows[#rows + 1] = {sc = score(sg, st, now), txt = string.format("%s  now=%.4g lo=%.4g hi=%.4g changes=%d upEating=%d full=%.4g empty=%.4g cal=%s",
+                    sg.key, st.last, st.lo, st.hi, st.n, st.up, f, e, tostring(calSnap[sg.key]))}
+            end
+        end
+        table.sort(rows, function(a, b) return a.sc > b.sc end)
+        table.insert(out, "parts (" .. #sigs .. "):")
+        for i = 1, math.min(#rows, 40) do
+            table.insert(out, string.format("%.3f  %s", rows[i].sc, rows[i].txt))
+        end
+        return table.concat(out, "\n")
     end
     Options.hungerFull = {
         Default = false,
-        Get = function() return userFull or false end,
-        Set = function(v) userFull = (type(v) == "number" and v > 0.05 and v <= 1) and v or nil end,
+        Get = function()
+            local snap = {}
+            local cnt = 0
+            for k, v in pairs(calSnap) do
+                if cnt < 120 then snap[k] = v; cnt = cnt + 1 end
+            end
+            return {snap = snap, key = savedKey or false, raw = calRaw or false}
+        end,
+        Set = function(v)
+            calSnap, learned, calRaw = {}, {}, nil
+            if type(v) == "table" then
+                if type(v.snap) == "table" then
+                    for k, x in pairs(v.snap) do
+                        if type(k) == "string" and type(x) == "number" then calSnap[k] = x end
+                    end
+                end
+                if type(v.key) == "string" then savedKey = v.key end
+                if type(v.raw) == "number" and v.raw > 0.05 and v.raw <= 1 then calRaw = v.raw end
+            end
+        end,
     }
     H.hungerSource = function() return hungerSrc end
 
