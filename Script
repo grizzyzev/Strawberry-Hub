@@ -16,7 +16,7 @@ local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local genv = (getgenv and getgenv()) or _G
 
-local VERSION = "v1.24.0"
+local VERSION = "v1.26.3"
 
 for _, env in ipairs({genv, _G}) do
     local old = env.StrawberryUnload
@@ -53,7 +53,7 @@ end
 
 local S: {[string]: any} = {
     autoEat = false, autoDrink = false, autoZone = false, eatPlants = false, eatMeat = false,
-    eatRate = 25, eatPromptOnly = false, autoFishing = false, fishGoTo = false,
+    eatRate = 25, eatPromptOnly = false, eatTrees = false, eatMeatOn = false, autoRest = false, eatStart = 90, autoFishing = false, fishGoTo = false,
     zoneUnder = true, zoneAutoLower = true, zoneHeight = 8, zoneDepth = 15, zoneNoclip = false, zoneWait = 20,
     zoneEnemyRadius = 0, zoneDefend = false,
     autoMeat = false, eatTp = false, eatBelow = 95, returnAfter = true, eatRange = 40,
@@ -2046,13 +2046,16 @@ do
         local zoneBar = createBar(zoneBox, 16)
 
         local survive = createGroupbox(Pages.Autofarm.Left, "Survival")
-        createCheckbox(survive, "Auto Eat", false, function(s) S.autoEat = s end, "autoEat")
-        createLabel(survive, "Presses E really fast while you are hungry and eats the closest food in range, even when the Eat prompt is not showing. Works for herbivores and carnivores.", 58)
-        createSlider(survive, "Eat Speed (E presses / sec)", 5, 40, 25, "", function(v) S.eatRate = v end, "eatRate")
-        createSlider(survive, "Eat Range (studs)", 10, 150, 40, "", function(v) S.eatRange = v end, "eatRange")
-        createSlider(survive, "Eat When Hunger Below", 5, 100, S.eatBelow, "%", function(v) S.eatBelow = v end, "eatBelow")
-        createCheckbox(survive, "Only When An E Prompt Shows", false, function(s) S.eatPromptOnly = s end, "eatPromptOnly")
+        createCheckbox(survive, "Auto Eat Trees (Herbivore)", false, function(s) S.eatTrees = s end, "eatTrees")
+        createCheckbox(survive, "Auto Eat Meat (Carnivore)", false, function(s) S.eatMeatOn = s end, "eatMeatOn")
         createCheckbox(survive, "Auto Drink", false, function(s) S.autoDrink = s end, "autoDrink")
+        createCheckbox(survive, "Auto Rest", false, function(s) S.autoRest = s end, "autoRest")
+        H.hungerBar = createBar(survive, 16)
+        H.hungerBar.Set(0, "Hunger: -")
+        createSlider(survive, "Start Eating Below (hunger %)", 5, 99, 90, "%", function(v) S.eatStart = v end, "eatStart")
+        createSlider(survive, "Eat Speed (E presses / sec)", 2, 30, 12, "", function(v) S.eatRate = v end, "eatRate")
+        createLabel(survive, "Starts eating when your hunger drops below the slider and keeps eating until the bar is full, then stops (no E spam).", 44)
+        H.needL = createLabel(survive, "Game asks: -", 16, true)
         H.foodStatus = createLabel(survive, "Food: idle", 30, true)
 
         local fishBox = createGroupbox(Pages.Autofarm.Right, "Fishing")
@@ -3955,13 +3958,17 @@ end)
         defending = true
         S.zoneNoclip = true
         startHold()
-        local off = math.clamp(learned[i] or -3, -8, -2)
         local t0 = os.clock()
         while running and S.zoneDefend and not S.lowHpActive and os.clock() - t0 < 300 do
             local e = enemyIn(i, zone)
             if not e then break end
+            -- under the map: the height that worked for capturing this territory, otherwise your Undermap Depth
+            -- (read every tick, so the slider moves you live). Never above ground.
+            local off = learned[i] or -math.max(S.zoneDepth or 15, 8)
+            if off > -2 then off = -2 end
+            S.zoneNoclip = true
             holdCF = CFrame.new(zone.Position + Vector3.new(0, off, 0))
-            status(string.format("Territory %d: DEFENDING, %s is inside your territory", i, H.nameOf(e)))
+            status(string.format("Territory %d: DEFENDING from under the map, %s is inside your territory", i, H.nameOf(e)))
             pcall(function() zoneRow.Label.Text = "Defending zone " .. i end)
             task.wait(0.1)
         end
@@ -7536,7 +7543,9 @@ end)
         end
         if not best then return nil end
         local v, mx = best[1], best[2]
-        if not mx or mx <= 0 then mx = (v <= 1) and 1 or 100 end
+        if not mx or mx <= 0 then
+            if v <= 1 then mx = 1 elseif v <= 100 then mx = 100 else return nil end
+        end
         hungerSrc = best[3]
         return math.clamp(v / mx, 0, 1)
     end
@@ -7544,18 +7553,7 @@ end)
     -- the hunger bar on screen: a frame named like hunger / food, read its fill or its number
     local hudBar, hudNext = nil, 0
     local findOrangeBar
-    local function readBar(c)
-        if not c.Parent or not c.Visible then return nil end
-        -- "75/100" or "75"
-        for _, d in ipairs(c:GetDescendants()) do
-            if d:IsA("TextLabel") and d.Visible then
-                local cur, mx = string.match(d.Text, "(%d+%.?%d*)%s*/%s*(%d+%.?%d*)")
-                if cur then return math.clamp((tonumber(cur) or 0) / math.max(tonumber(mx) or 100, 1), 0, 1) end
-                local pct = string.match(d.Text, "^%s*(%d+%.?%d*)%s*%%?%s*$")
-                if pct then return math.clamp((tonumber(pct) or 0) / 100, 0, 1) end
-            end
-        end
-        -- no number: use the fill bar width
+    local function fillOf(c)
         for _, d in ipairs(c:GetDescendants()) do
             if (d:IsA("Frame") or d:IsA("ImageLabel")) and d.Visible then
                 local l = string.lower(d.Name)
@@ -7568,6 +7566,25 @@ end)
         end
         return nil
     end
+    local function readBar(c)
+        if not c.Parent or not c.Visible then return nil end
+        local plain = nil
+        for _, d in ipairs(c:GetDescendants()) do
+            if d:IsA("TextLabel") and d.Visible then
+                local cur, mx = string.match(d.Text, "(%d+%.?%d*)%s*/%s*(%d+%.?%d*)")
+                if cur then return math.clamp((tonumber(cur) or 0) / math.max(tonumber(mx) or 100, 1), 0, 1) end
+                local pct = string.match(d.Text, "^%s*(%d+%.?%d*)%s*%%%s*$")
+                if pct then return math.clamp((tonumber(pct) or 0) / 100, 0, 1) end
+                plain = plain or tonumber(string.match(d.Text, "^%s*(%d+%.?%d*)%s*$") or "")
+            end
+        end
+        -- how full the bar is (what you see), e.g. "101" with the bar half full = 50%
+        local f = fillOf(c)
+        if f then return f end
+        -- only a number, no bar: it can only be a percentage if it is 0-100
+        if plain and plain <= 100 then return plain / 100 end
+        return nil
+    end
     local orangeBar = nil
     local function isOrange(c)
         local h, sat, v = c:ToHSV()
@@ -7575,12 +7592,16 @@ end)
     end
     local function orangeFrac(f)
         local par = f.Parent :: any
-        local num = par and readBar(par)
-        if num then return num end
-        if par and par:IsA("GuiObject") and par.AbsoluteSize.X > f.AbsoluteSize.X + 2 then
-            return math.clamp(f.AbsoluteSize.X / par.AbsoluteSize.X, 0, 1)
+        -- the orange part is the fill: how wide it is compared to the bar behind it
+        if par and par:IsA("GuiObject") and par.AbsoluteSize.X > 10 and f.AbsoluteSize.X <= par.AbsoluteSize.X + 1 then
+            local frac = f.AbsoluteSize.X / par.AbsoluteSize.X
+            if frac < 0.995 then return math.clamp(frac, 0, 1) end
         end
-        return nil   -- can not tell: treat hunger as unknown (keeps eating) instead of "full"
+        -- full width orange: either really full, or the fill is inside it
+        local inner = fillOf(f)
+        if inner then return inner end
+        if par and par:IsA("GuiObject") and par.AbsoluteSize.X > 10 then return 1 end
+        return nil
     end
     findOrangeBar = function()
         if orangeBar and orangeBar.Parent and orangeBar.Visible then return orangeBar end
@@ -7592,8 +7613,17 @@ end)
                     if (d:IsA("Frame") and d.BackgroundTransparency < 0.9 and isOrange(d.BackgroundColor3))
                         or (d:IsA("ImageLabel") and d.ImageTransparency < 0.9 and isOrange(d.ImageColor3) and d.Image ~= "") then
                         local w = d.AbsoluteSize.X
-                        -- a bar: wide and flat, and actually on screen
-                        if w > 30 and w > d.AbsoluteSize.Y * 2 and d.Visible and w > bestW then best, bestW = d, w end
+                        -- a bar: wide and flat, and actually on screen. The one with a number next to it ("101") wins.
+                        local score = w
+                        local par = d.Parent :: any
+                        for _, holder in ipairs({par, par and par.Parent}) do
+                            if holder then
+                                for _, t in ipairs(holder:GetDescendants()) do
+                                    if t:IsA("TextLabel") and string.match(t.Text, "^%s*%d+%s*$") then score = score + 1000; break end
+                                end
+                            end
+                        end
+                        if d.Visible and d.AbsoluteSize.X > d.AbsoluteSize.Y * 2 and score > bestW then best, bestW = d, score end
                     end
                 end
             end
@@ -7641,10 +7671,10 @@ end)
     end
 
     local function hungerFrac()
-        local v = fromValues()
-        if v then return v end
         local h = fromHud()
         if h then return h end
+        local v = fromValues()
+        if v then return v end
         hungerSrc = "?"
         return nil
     end
@@ -8939,7 +8969,6 @@ end)
                     restoreAll()
                     target = nil
                 end
-                if not S.autoEat then status(H.foodStatus, "Food: idle") end
                 presses = 0
                 task.wait(0.25)
                 continue
@@ -9010,6 +9039,194 @@ end)
         end
         keyE(false)
         restoreAll()
+    end)
+
+    ------------------------------------------------------------------
+    -- WHAT THE GAME ASKS YOU TO DO: GameUI > QuestsFrame shows "Eat something", "Drink water" or "Rest"
+    ------------------------------------------------------------------
+    local need, needFound = "None", false
+    task.spawn(function()
+        while running do
+            pcall(function()
+                local qf = nil
+                local gameUi = playerGui:FindFirstChild("GameUI")
+                if gameUi then qf = gameUi:FindFirstChild("QuestsFrame") end
+                needFound = qf ~= nil
+                local found = "None"
+                if qf then
+                    for _, child in ipairs(qf:GetChildren()) do
+                        local text = ""
+                        for _, d in ipairs(child:GetDescendants()) do
+                            if d:IsA("TextLabel") then text = text .. " " .. string.lower(d.Text) end
+                        end
+                        if string.find(text, "eat something", 1, true) then found = "Eat"; break
+                        elseif string.find(text, "drink water", 1, true) then found = "Drink"; break
+                        elseif string.find(text, "rest", 1, true) then found = "Rest"; break end
+                    end
+                end
+                need = found
+                H.currentNeed = found
+                if S.eatTrees or S.eatMeatOn or S.autoDrink or S.autoRest then
+                    status(H.needL, "Game asks: " .. (needFound and (found == "None" and "nothing right now" or found) or "quest list not found"))
+                else
+                    status(H.needL, "Game asks: -")
+                end
+            end)
+            task.wait(0.2)
+        end
+    end)
+
+    -- hungry = the game shows "Eat something" (if the quest list is missing: your hunger % instead)
+    -- eat until FULL, then stop. Start again once you are getting hungry (bar under 90% or the game says
+    -- "Eat something"), so it never presses E for nothing.
+    local hungerShown = "?"
+    local eatingNow = false
+    local FULL = 0.99
+    local function showHunger(hf)
+        if not H.hungerBar then return end
+        if hf then
+            H.hungerBar.Set(hf, string.format("Hunger: %d%%", math.floor(hf * 100 + 0.5)))
+        else
+            H.hungerBar.Set(0, "Hunger: not found")
+        end
+    end
+    local function isHungry()
+        local ok, hf = pcall(hungerFrac)
+        hf = ok and hf or nil
+        showHunger(hf)
+        if hf then
+            hungerShown = string.format("%d%%", math.floor(hf * 100 + 0.5))
+                .. (H.hungerSource and (" from " .. tostring(H.hungerSource())) or "")
+            local start = math.clamp((S.eatStart or 90) / 100, 0.05, 0.99)
+            if hf >= FULL then
+                eatingNow = false
+            elseif hf < start or (needFound and need == "Eat") then
+                eatingNow = true
+            end
+            return eatingNow
+        end
+        -- no hunger bar found: follow the game's "Eat something" quest only
+        hungerShown = needFound and ("? (game asks: " .. need .. ")") or "? (no hunger bar found)"
+        eatingNow = needFound and need == "Eat"
+        return eatingNow
+    end
+    H.needsDrink = function()
+        if needFound then return need == "Drink" end
+        return true
+    end
+
+    ------------------------------------------------------------------
+    -- AUTO EAT TREES (herbivores) / AUTO EAT MEAT (carnivores)
+    -- while hungry: presses E, triggers the closest food's Eat prompt, and uses the game's own Eat command
+    ------------------------------------------------------------------
+    task.spawn(function()
+        local target, targetKind, scanT, remoteT, promptT, hungerT, hungry = nil, nil, -100, -100, -100, -100, false
+        local promptTarget, promptD = nil, nil
+        while running do
+            local ok = pcall(function()
+                if not (S.eatTrees or S.eatMeatOn) or S.lowHpActive then
+                    keyE(false)
+                    if promptTarget then restorePrompt(promptTarget); promptTarget = nil end
+                    if not (S.eatTrees or S.eatMeatOn) then status(H.foodStatus, "Food: idle") end
+                    if os.clock() - hungerT > 1 then
+                        hungerT = os.clock()
+                        local okh, hf = pcall(hungerFrac)
+                        showHunger(okh and hf or nil)
+                    end
+                    task.wait(0.2)
+                    return
+                end
+                local now = os.clock()
+                if now - hungerT > 0.3 then
+                    hungerT = now
+                    hungry = isHungry()
+                end
+                if not hungry then
+                    keyE(false)
+                    status(H.foodStatus, "Food: full, waiting until you get hungry (hunger " .. hungerShown .. ")")
+                    task.wait(0.2)
+                    return
+                end
+                if UIS:GetFocusedTextBox() ~= nil then   -- never type E into chat
+                    keyE(false)
+                    task.wait(0.1)
+                    return
+                end
+
+                -- closest food (once a second)
+                if now - scanT > 1 or not target or not target.Parent then
+                    scanT = now
+                    target, targetKind = nil, nil
+                    local bestD = math.huge
+                    if S.eatTrees then
+                        local t, _, d = nearestTree()
+                        if t and d and d < bestD then target, targetKind, bestD = t, "tree", d end
+                    end
+                    if S.eatMeatOn then
+                        buildIndex()
+                        local m, _, d = nearest(index.meat)
+                        if m and d and d < bestD then target, targetKind, bestD = m, "meat", d end
+                    end
+                    -- the nearest Eat prompt (the "E Eat" bubble), for pressing E / triggering it
+                    indexEat()
+                    local okp, pp, pd = pcall(nearestEat)
+                    if not okp then pp, pd = nil, nil end
+                    if pp ~= promptTarget then
+                        if promptTarget then restorePrompt(promptTarget) end
+                        promptTarget = pp
+                        if pp then prepPrompt(pp) end
+                    end
+                    promptD = pd
+                end
+
+                -- 1) press E
+                keyE(true)
+                task.wait()
+                keyE(false)
+                -- 2) trigger the Eat prompt directly (a few times a second)
+                if promptTarget and promptTarget.Parent and now - promptT >= 0.2 then
+                    promptT = now
+                    firePrompt(promptTarget)
+                end
+                -- 3) the game's Eat command on the closest tree / meat (like your script)
+                local r = eatRemote()
+                if target and r and now - remoteT >= 0.4 then
+                    remoteT = now
+                    pcall(function() r:FireServer(target) end)
+                end
+
+                local what = target and (targetKind .. " " .. target.Name) or (promptTarget and "food") or nil
+                status(H.foodStatus, string.format("Food: pressing E%s  |  hunger %s",
+                    what and (" on " .. what .. ((promptTarget and promptD) and string.format(" (%dm)", math.floor(promptD)) or "")) or ", no food found nearby",
+                    hungerShown))
+                task.wait(math.max(1 / (S.eatRate or 12) - 1 / 60, 0))
+            end)
+            if not ok then task.wait(0.3) end
+        end
+        keyE(false)
+    end)
+
+    ------------------------------------------------------------------
+    -- AUTO REST: the game's Rest command while it asks you to rest
+    ------------------------------------------------------------------
+    task.spawn(function()
+        local resting = false
+        while running do
+            task.wait(0.3)
+            pcall(function()
+                local restRemote = RS:FindFirstChild("Remotes") and RS.Remotes:FindFirstChild("Character")
+                    and RS.Remotes.Character:FindFirstChild("Rest")
+                if not restRemote then return end
+                local should = S.autoRest and need == "Rest"
+                if should and not resting then
+                    restRemote:InvokeServer(true)
+                    resting = true
+                elseif not should and resting then
+                    restRemote:InvokeServer(false)
+                    resting = false
+                end
+            end)
+        end
     end)
 end)
 
