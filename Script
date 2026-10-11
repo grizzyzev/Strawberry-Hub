@@ -1,3 +1,5 @@
+-- Strawberry Hub: if anything stops the script while loading, you get a notification + the exact error in the console
+local __shOk, __shErr = xpcall(function()
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
@@ -14,7 +16,7 @@ local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local genv = (getgenv and getgenv()) or _G
 
-local VERSION = "v1.23.1"
+local VERSION = "v1.24.0"
 
 for _, env in ipairs({genv, _G}) do
     local old = env.StrawberryUnload
@@ -3648,6 +3650,7 @@ end)
 switchPage("Main")
 
 task.spawn(function()
+  local animOk = pcall(function()
     tween(dim, 0.3, {BackgroundTransparency = 0.45})
     tween(loaderScale, 0.25, {Scale = 1})
     task.wait(0.4)
@@ -3673,12 +3676,16 @@ task.spawn(function()
     tween(loaderScale, 0.2, {Scale = 0}, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
     tween(dim, 0.25, {BackgroundTransparency = 1})
     task.wait(0.3)
-    loader:Destroy()
+  end)
+    if not running then return end
+    pcall(function() loader:Destroy() end)
+    if not animOk then warn("[Strawberry Hub] loading animation failed, opening the menu anyway") end
 
     loaded = true
-    wm.Visible = S.watermark
-    menuBtn.Visible = isTouch
+    pcall(function() wm.Visible = S.watermark end)
+    pcall(function() menuBtn.Visible = isTouch end)
     setGuiOpen(true)
+    print("[Strawberry Hub] " .. VERSION .. " loaded")
 end)
 
 do
@@ -5853,15 +5860,26 @@ end)
         return nil
     end
 
-    -- names that are about fossils but are NOT your fossil count
-    local NOT_COUNT = {"icon", "image", "price", "cost", "reward", "earn", "multi", "bonus", "boost", "last",
-        "gain", "rate", "quest", "goal", "require", "need", "chance", "drop", "per", "spent", "bought", "max",
-        "shop", "sell", "buy", "pack", "skin", "item"}
+    -- names that are about fossils but are NOT your fossil count (whole words only:
+    -- "FossilsPerHour" is skipped, "FossilWrapper" is not)
+    local NOT_COUNT = {}
+    for _, w in ipairs({"icon", "image", "img", "price", "cost", "reward", "rewards", "earn", "earned", "earning",
+        "multi", "multiplier", "bonus", "boost", "last", "gain", "gained", "rate", "quest", "goal", "require",
+        "required", "need", "needed", "chance", "drop", "per", "spent", "bought", "max", "maximum", "shop", "sell",
+        "buy", "pack", "skin", "item", "items", "cap", "limit", "hour", "daily", "bundle"}) do
+        NOT_COUNT[w] = true
+    end
+    local function words(n)
+        local spaced = string.gsub(n, "(%l)(%u)", "%1 %2")
+        spaced = string.gsub(spaced, "(%u)(%u%l)", "%1 %2")
+        local out = {}
+        for w in string.gmatch(string.lower(spaced), "%a+") do out[#out + 1] = w end
+        return out
+    end
     local function isFossilName(n)
-        local l = string.lower(n)
-        if not string.find(l, "fossil", 1, true) then return false end
-        for _, w in ipairs(NOT_COUNT) do
-            if string.find(l, w, 1, true) then return false end
+        if not string.find(string.lower(n), "fossil", 1, true) then return false end
+        for _, w in ipairs(words(n)) do
+            if NOT_COUNT[w] then return false end
         end
         return true
     end
@@ -5965,7 +5983,7 @@ end)
             if hit then return hit end
         end
         if os.clock() < scrNext then return nil end
-        scrNext = os.clock() + 2
+        scrNext = os.clock() + 0.5
         scrLbl = nil
         for _, g in ipairs(playerGui:GetChildren()) do
             if g:IsA("LayerCollector") and g.Enabled and not string.find(g.Name, "Strawberry", 1, true) then
@@ -6120,13 +6138,43 @@ end)
         connections[#connections + 1] = watchConn
     end
 
+    -- the moment the game creates its fossil label or value (joining, respawning), read it right away
+    local kick = false
+    connect(playerGui.DescendantAdded, function(d)
+        if d:IsA("TextLabel") then
+            local ctx = d.Name .. " " .. (d.Parent and d.Parent.Name or "")
+            if isFossilName(ctx) then
+                scrNext = 0
+                kick = true
+            end
+        end
+    end)
+    connect(player.DescendantAdded, function(d)
+        if (d:IsA("ValueBase")) and isFossilName(d.Name) then kick = true end
+    end)
+    connect(player.AttributeChanged, function(n)
+        if isFossilName(n) then kick = true end
+    end)
+
     task.spawn(function()
         local lastFull = 0
+        local started = os.clock()
         while running do
+            if kick then
+                kick = false
+                pcall(function()
+                    local hit = read()
+                    watch(hit)
+                    watchScreen()
+                    update(hit)
+                end)
+                lastFull = os.clock()
+            end
             pcall(function()
                 local now = os.clock()
                 -- full search every 2s (finds the source), fast re-read of game script data in between
-                if now - lastFull >= (watchKey and 4 or 1) then
+                local searching = not H.fossilDisplay and now - started < 60
+                if now - lastFull >= (watchKey and 4 or (searching and 0.25 or 1)) then
                     lastFull = now
                     local hit = read()
                     watch(hit)
@@ -6427,7 +6475,7 @@ end)
         local fakeThumb = "rbxthumb://type=AvatarHeadShot&id=1&w=150&h=150"
         task.spawn(function()
             for _ = 1, 6 do
-                local id = math.random(100000, 2500000000)
+                local id = math.random(100000, 2000000000)
                 local ok = pcall(function() return Players:GetNameFromUserIdAsync(id) end)
                 if ok then
                     fakeThumb = "rbxthumb://type=AvatarHeadShot&id=" .. id .. "&w=150&h=150"
@@ -7527,10 +7575,12 @@ end)
     end
     local function orangeFrac(f)
         local par = f.Parent :: any
+        local num = par and readBar(par)
+        if num then return num end
         if par and par:IsA("GuiObject") and par.AbsoluteSize.X > f.AbsoluteSize.X + 2 then
             return math.clamp(f.AbsoluteSize.X / par.AbsoluteSize.X, 0, 1)
         end
-        return readBar(par or f) or 1
+        return nil   -- can not tell: treat hunger as unknown (keeps eating) instead of "full"
     end
     findOrangeBar = function()
         if orangeBar and orangeBar.Parent and orangeBar.Visible then return orangeBar end
@@ -7554,7 +7604,8 @@ end)
 
     local function fromHud()
         if orangeBar and orangeBar.Parent and orangeBar.Visible and not hudBar then
-            return orangeFrac(orangeBar)
+            local f = orangeFrac(orangeBar)
+            if f then return f end
         end
         if hudBar then
             local f = readBar(hudBar)
@@ -7580,8 +7631,11 @@ end)
         -- bars with no useful names: the hunger bar is the ORANGE one (health green, water blue, stamina yellow)
         local orange = findOrangeBar()
         if orange then
-            hungerSrc = "HUD orange bar '" .. orange.Name .. "'"
-            return orangeFrac(orange)
+            local f = orangeFrac(orange)
+            if f then
+                hungerSrc = "HUD orange bar '" .. orange.Name .. "'"
+                return f
+            end
         end
         return nil
     end
@@ -8727,7 +8781,7 @@ end)
     -- every "eat" prompt (E) on the map, kept up to date
     local eatPrompts, eatIndexed = setmetatable({}, {__mode = "k"}), false
     local drinkPrompts = setmetatable({}, {__mode = "k"})
-    local origPrompt = setmetatable({}, {__mode = "k"})
+
     local function isDrinkPrompt(pp)
         local t = string.lower(pp.ActionText .. " " .. pp.ObjectText .. " " .. pp.Name)
         return string.find(t, "drink", 1, true) ~= nil or string.find(t, "water", 1, true) ~= nil
@@ -8768,47 +8822,65 @@ end)
         end
     end
 
-    -- let food prompts work from your Eat Range (on your side), or put them back
-    local function stretchPrompts(on)
-        for pp in pairs(eatPrompts) do
-            if pp.Parent then
-                if on then
-                    if not origPrompt[pp] then origPrompt[pp] = {pp.MaxActivationDistance, pp.RequiresLineOfSight} end
-                    local want = math.max(origPrompt[pp][1], S.eatRange or 40)
-                    if pp.MaxActivationDistance ~= want then pp.MaxActivationDistance = want end
-                    if pp.RequiresLineOfSight then pp.RequiresLineOfSight = false end
-                    silence(pp, true)
-                elseif origPrompt[pp] then
-                    pp.MaxActivationDistance = origPrompt[pp][1]
-                    pp.RequiresLineOfSight = origPrompt[pp][2]
-                    origPrompt[pp] = nil
-                    silence(pp, false)
-                end
-            else
-                eatPrompts[pp] = nil
-            end
-        end
+    -- only the food you are eating right now is changed: longer range + no bubble. Everything else is untouched.
+    local touched = setmetatable({}, {__mode = "k"})   -- prompt -> {dist, los}
+    local function restorePrompt(pp)
+        local o = touched[pp]
+        if not o then return end
+        pcall(function()
+            pp.MaxActivationDistance = o[1]
+            pp.RequiresLineOfSight = o[2]
+        end)
+        pcall(silence, pp, false)
+        touched[pp] = nil
+    end
+    local function prepPrompt(pp)
+        pcall(function()
+            if not touched[pp] then touched[pp] = {pp.MaxActivationDistance, pp.RequiresLineOfSight} end
+            local want = math.max(touched[pp][1], S.eatRange or 40)
+            if pp.MaxActivationDistance ~= want then pp.MaxActivationDistance = want end
+            if pp.RequiresLineOfSight then pp.RequiresLineOfSight = false end
+        end)
+        pcall(silence, pp, true)
+    end
+    local function restoreAll()
+        for pp in pairs(touched) do restorePrompt(pp) end
     end
 
+    -- where each food prompt is (food does not move, so this is remembered)
+    local posPart = setmetatable({}, {__mode = "k"})
     local function promptPos(pp)
+        local c = posPart[pp]
+        if c and c.Parent then
+            if c:IsA("Attachment") then return c.WorldPosition end
+            return c.Position
+        end
         local h = pp.Parent :: any
         if not h then return nil end
-        if h:IsA("BasePart") then return h.Position end
-        if h:IsA("Attachment") then return h.WorldPosition end
-        local part = h:FindFirstChildWhichIsA("BasePart", true)
-        return part and part.Position or nil
+        if h:IsA("BasePart") or h:IsA("Attachment") then
+            c = h
+        else
+            c = h:FindFirstChildWhichIsA("BasePart", true)
+        end
+        if not c then return nil end
+        posPart[pp] = c
+        if c:IsA("Attachment") then return c.WorldPosition end
+        return c.Position
     end
 
     -- the closest food prompt inside your Eat Range
     local function nearestEat()
         local hrp = getRoot(player)
         if not hrp then return nil end
+        local me = hrp.Position
         local best, bestD = nil, S.eatRange or 40
         for pp in pairs(eatPrompts) do
-            if pp.Parent and pp.Enabled then
+            if not pp.Parent then
+                eatPrompts[pp] = nil
+            elseif pp.Enabled then
                 local pos = promptPos(pp)
                 if pos then
-                    local d = (pos - hrp.Position).Magnitude
+                    local d = (pos - me).Magnitude
                     if d <= bestD then best, bestD = pp, d end
                 end
             end
@@ -8817,7 +8889,7 @@ end)
     end
 
     H.promptRestore = function()
-        pcall(stretchPrompts, false)
+        restoreAll()
         for pp in pairs(drinkPrompts) do pcall(silence, pp, false) end
     end
 
@@ -8844,7 +8916,10 @@ end)
 
     local g: any = (getgenv and getgenv()) or _G
     local kp, kr = rawget(g, "keypress"), rawget(g, "keyrelease")
+    local eDown = false
     local function keyE(down)
+        if down == eDown then return end
+        eDown = down
         if VIMe then
             pcall(function() VIMe:SendKeyEvent(down, Enum.KeyCode.E, false, game) end)
         elseif type(kp) == "function" and type(kr) == "function" then
@@ -8855,13 +8930,14 @@ end)
     task.spawn(function()
         local presses, hungerT, hungerV, statusT = 0, 0, nil, 0
         local wasOn = false
-        local target, targetD, scanT = nil, nil, 0
+        local target, targetD, scanT, fireT = nil, nil, 0, 0
         while running do
             if not S.autoEat or S.lowHpActive then
                 if wasOn then
                     keyE(false)
                     wasOn = false
-                    pcall(stretchPrompts, false)
+                    restoreAll()
+                    target = nil
                 end
                 if not S.autoEat then status(H.foodStatus, "Food: idle") end
                 presses = 0
@@ -8870,46 +8946,70 @@ end)
             end
             wasOn = true
             local now = os.clock()
-            if now - scanT > 0.25 then
+
+            -- find food twice a second
+            if now - scanT > 0.5 then
                 scanT = now
                 indexEat()
-                pcall(stretchPrompts, true)
                 local ok, t, d = pcall(nearestEat)
-                if ok then target, targetD = t, d else target = nil end
+                if not ok then t, d = nil, nil end
+                if t ~= target then
+                    if target then restorePrompt(target) end
+                    target = t
+                    if target then prepPrompt(target) end
+                end
+                targetD = d
             end
+            -- hunger twice a second
             if now - hungerT > 0.5 then
                 hungerT = now
                 local ok, v = pcall(hungerFrac)
                 hungerV = ok and v or nil
             end
             local hungerTxt = hungerV and string.format("%d%%", math.floor(hungerV * 100 + 0.5)) or "? (not found, eating anyway)"
+
             if hungerV and hungerV * 100 >= S.eatBelow then
+                keyE(false)
                 if now - statusT > 0.5 then statusT = now; status(H.foodStatus, "Food: full (hunger " .. hungerTxt .. ")") end
                 task.wait(0.25)
             elseif UIS:GetFocusedTextBox() ~= nil then
-                task.wait(0.1)   -- never type E into chat / a text box
+                keyE(false)   -- never type E into chat / a text box
+                task.wait(0.1)
             elseif S.eatPromptOnly and not ePromptShown() and not target then
+                keyE(false)
                 if now - statusT > 0.5 then statusT = now; status(H.foodStatus, "Food: waiting for an E prompt") end
                 task.wait(0.1)
             else
-                -- eat the closest food directly (works without the prompt on screen) + press E
-                if target and target.Parent then firePrompt(target) end
-                keyE(true)
-                task.wait()
-                keyE(false)
+                -- trigger the food itself (works without the bubble on screen), at most 6 times a second
+                if target and target.Parent and now - fireT >= 1 / 6 then
+                    fireT = now
+                    firePrompt(target)
+                end
+                local hold = target and target.Parent and (target :: any).HoldDuration > 0
+                if hold then
+                    -- food you have to HOLD E on: keep E held down
+                    keyE(true)
+                    task.wait(0.1)
+                else
+                    keyE(true)
+                    task.wait()
+                    keyE(false)
+                    task.wait(math.max(1 / (S.eatRate or 25) - 1 / 60, 0))
+                end
                 presses = presses + 1
                 if now - statusT > 0.5 then
                     statusT = now
                     if target then
-                        status(H.foodStatus, string.format("Food: eating (%dm away, %d)  |  hunger %s", math.floor(targetD or 0), presses, hungerTxt))
+                        status(H.foodStatus, string.format("Food: eating (%dm away%s)  |  hunger %s", math.floor(targetD or 0),
+                            hold and ", holding E" or "", hungerTxt))
                     else
-                        status(H.foodStatus, string.format("Food: pressing E (%d), no food prompt in range  |  hunger %s", presses, hungerTxt))
+                        status(H.foodStatus, "Food: pressing E, no food in range  |  hunger " .. hungerTxt)
                     end
                 end
-                task.wait(math.max(1 / (S.eatRate or 25) - 1 / 60, 0))
             end
         end
         keyE(false)
+        restoreAll()
     end)
 end)
 
@@ -9103,3 +9203,17 @@ end
 genv.StrawberryUnload = H.unload
 genv.StrawberryVersion = VERSION
 _G.StrawberryUnload = H.unload
+
+end, function(e)
+    return tostring(e) .. "\n" .. debug.traceback()
+end)
+if not __shOk then
+    warn("[Strawberry Hub] failed to load:\n" .. tostring(__shErr))
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "Strawberry Hub failed to load",
+            Text = string.sub(string.match(tostring(__shErr), "[^\n]+") or tostring(__shErr), 1, 180),
+            Duration = 20,
+        })
+    end)
+end
