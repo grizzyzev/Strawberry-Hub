@@ -16,7 +16,7 @@ local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local genv = (getgenv and getgenv()) or _G
 
-local VERSION = "v1.26.3"
+local VERSION = "v1.26.5"
 
 for _, env in ipairs({genv, _G}) do
     local old = env.StrawberryUnload
@@ -2052,9 +2052,15 @@ do
         createCheckbox(survive, "Auto Rest", false, function(s) S.autoRest = s end, "autoRest")
         H.hungerBar = createBar(survive, 16)
         H.hungerBar.Set(0, "Hunger: -")
+        local calBtn = createButton(survive, "I'm Full Now (fix hunger %)")
+        calBtn.Activated:Connect(function()
+            local ok = H.calibrateHunger and H.calibrateHunger()
+            calBtn.Text = ok and "Saved! Full = 100%" or "Hunger bar not found"
+            task.delay(1.5, function() calBtn.Text = "I'm Full Now (fix hunger %)" end)
+        end)
         createSlider(survive, "Start Eating Below (hunger %)", 5, 99, 90, "%", function(v) S.eatStart = v end, "eatStart")
         createSlider(survive, "Eat Speed (E presses / sec)", 2, 30, 12, "", function(v) S.eatRate = v end, "eatRate")
-        createLabel(survive, "Starts eating when your hunger drops below the slider and keeps eating until the bar is full, then stops (no E spam).", 44)
+        createLabel(survive, "Eats when hunger drops below the slider, stops when full. It learns where YOUR full is (younger dinos can't fill the whole bar). Still wrong? Eat until full, then press I'm Full Now.", 58)
         H.needL = createLabel(survive, "Game asks: -", 16, true)
         H.foodStatus = createLabel(survive, "Food: idle", 30, true)
 
@@ -7590,19 +7596,55 @@ end)
         local h, sat, v = c:ToHSV()
         return h >= 0.03 and h <= 0.11 and sat >= 0.5 and v >= 0.6
     end
-    local function orangeFrac(f)
+    -- how wide the hunger bar can get ("its own space"), not the whole row it sits in
+    local userFull = nil   -- set by "I'm Full Now": how far the bar gets when you are full (0..1)
+    local function slotWidth(f)
         local par = f.Parent :: any
-        -- the orange part is the fill: how wide it is compared to the bar behind it
-        if par and par:IsA("GuiObject") and par.AbsoluteSize.X > 10 and f.AbsoluteSize.X <= par.AbsoluteSize.X + 1 then
-            local frac = f.AbsoluteSize.X / par.AbsoluteSize.X
-            if frac < 0.995 then return math.clamp(frac, 0, 1) end
+        local fx, fy, fh = f.AbsolutePosition.X, f.AbsolutePosition.Y, f.AbsoluteSize.Y
+        local best = nil
+        if par and par:IsA("GuiObject") then
+            -- 1) a dark track behind it (same left edge, at least as wide)
+            for _, sib in ipairs(par:GetChildren()) do
+                if sib ~= f and sib:IsA("GuiObject") and sib.Visible then
+                    local sy = sib.AbsolutePosition.Y
+                    local overlapsY = sy < fy + fh and sy + sib.AbsoluteSize.Y > fy
+                    if overlapsY and math.abs(sib.AbsolutePosition.X - fx) <= 2 and sib.AbsoluteSize.X >= f.AbsoluteSize.X
+                        and sib.AbsoluteSize.X > f.AbsoluteSize.Y * 2 then
+                        if not best or sib.AbsoluteSize.X < best then best = sib.AbsoluteSize.X end
+                    end
+                end
+            end
+            -- 2) the next bar to the right in the same row (the water bar) ends this bar's space
+            if not best then
+                local nextX = nil
+                for _, sib in ipairs(par:GetChildren()) do
+                    if sib ~= f and sib:IsA("GuiObject") and sib.Visible and not sib:IsA("TextLabel") then
+                        local sx, sy = sib.AbsolutePosition.X, sib.AbsolutePosition.Y
+                        local overlapsY = sy < fy + fh and sy + sib.AbsoluteSize.Y > fy
+                        if overlapsY and sx > fx + 4 and (not nextX or sx < nextX) then nextX = sx end
+                    end
+                end
+                if nextX then best = nextX - fx - 2 end
+            end
+            -- 3) otherwise the rest of the row
+            if not best and par.AbsoluteSize.X > 10 then
+                best = par.AbsolutePosition.X + par.AbsoluteSize.X - fx
+            end
         end
-        -- full width orange: either really full, or the fill is inside it
+        return best
+    end
+
+    local function orangeFrac(f)
+        local w = f.AbsoluteSize.X
+        local slot = slotWidth(f)
+        if slot and slot > 5 then
+            return math.clamp(w / slot, 0, 1)
+        end
         local inner = fillOf(f)
         if inner then return inner end
-        if par and par:IsA("GuiObject") and par.AbsoluteSize.X > 10 then return 1 end
         return nil
     end
+
     findOrangeBar = function()
         if orangeBar and orangeBar.Parent and orangeBar.Visible then return orangeBar end
         orangeBar = nil
@@ -7670,7 +7712,8 @@ end)
         return nil
     end
 
-    local function hungerFrac()
+    -- what the bar shows (0..1 of the WHOLE bar)
+    local function rawHunger()
         local h = fromHud()
         if h then return h end
         local v = fromValues()
@@ -7678,6 +7721,58 @@ end)
         hungerSrc = "?"
         return nil
     end
+
+    -- the game's "full" is often less than the whole bar (smaller dinos / younger growth can't fill it all:
+    -- full shows as ~49%). So "full" = how far the bar gets when you can't eat any more:
+    --   * "I'm Full Now" saves it, and
+    --   * while auto eating, if the bar went up and then stops going up for a few seconds, that is your full.
+    -- If the bar ever goes past it (you grew), "full" moves up with it.
+    local learnedFull = nil
+    local lastRaw, lastRiseT, rose = nil, 0, false
+    local function fullPoint()
+        return userFull or learnedFull
+    end
+    local function hungerFrac()
+        local raw = rawHunger()
+        if not raw then return nil end
+        local now = os.clock()
+        if H.eatingActive then
+            if lastRaw and raw > lastRaw + 0.004 then
+                rose, lastRiseT = true, now
+            end
+            if not lastRaw or raw > lastRaw or raw < lastRaw - 0.02 then lastRaw = raw end
+            if rose and now - lastRiseT > 5 and raw > 0.15 and not userFull then
+                learnedFull = raw          -- ate, the bar stopped rising: this is full
+                rose = false
+            end
+        else
+            rose, lastRaw = false, raw
+        end
+        local full = fullPoint()
+        if full and raw > full + 0.01 then  -- the bar went further than "full": you can hold more now
+            if userFull then userFull = raw else learnedFull = raw end
+            full = raw
+        end
+        if full and full > 0.05 then
+            return math.clamp(raw / full, 0, 1)
+        end
+        return raw
+    end
+    H.hungerLastRise = function() return lastRiseT end
+    H.calibrateHunger = function()
+        local raw = rawHunger()
+        if raw and raw > 0.05 then
+            userFull = raw
+            learnedFull = nil
+            return true
+        end
+        return false
+    end
+    Options.hungerFull = {
+        Default = false,
+        Get = function() return userFull or false end,
+        Set = function(v) userFull = (type(v) == "number" and v > 0.05 and v <= 1) and v or nil end,
+    }
     H.hungerSource = function() return hungerSrc end
 
     ------------------------------------------------------------------
@@ -9081,10 +9176,11 @@ end)
     -- "Eat something"), so it never presses E for nothing.
     local hungerShown = "?"
     local eatingNow = false
-    local FULL = 0.99
+    local FULL = 0.97   -- bars have a small gap, so 97%+ counts as full
     local function showHunger(hf)
         if not H.hungerBar then return end
         if hf then
+            if hf >= FULL then hf = 1 end
             H.hungerBar.Set(hf, string.format("Hunger: %d%%", math.floor(hf * 100 + 0.5)))
         else
             H.hungerBar.Set(0, "Hunger: not found")
@@ -9098,16 +9194,20 @@ end)
             hungerShown = string.format("%d%%", math.floor(hf * 100 + 0.5))
                 .. (H.hungerSource and (" from " .. tostring(H.hungerSource())) or "")
             local start = math.clamp((S.eatStart or 90) / 100, 0.05, 0.99)
-            if hf >= FULL then
+            -- full = the bar is at your full AND it stopped going up (so a wrong "full" fixes itself)
+            local lastRise = H.hungerLastRise and H.hungerLastRise() or 0
+            if hf >= FULL and os.clock() - lastRise > 2.5 then
                 eatingNow = false
             elseif hf < start or (needFound and need == "Eat") then
                 eatingNow = true
             end
+            H.eatingActive = eatingNow
             return eatingNow
         end
         -- no hunger bar found: follow the game's "Eat something" quest only
         hungerShown = needFound and ("? (game asks: " .. need .. ")") or "? (no hunger bar found)"
         eatingNow = needFound and need == "Eat"
+        H.eatingActive = eatingNow
         return eatingNow
     end
     H.needsDrink = function()
@@ -9125,6 +9225,7 @@ end)
         while running do
             local ok = pcall(function()
                 if not (S.eatTrees or S.eatMeatOn) or S.lowHpActive then
+                    H.eatingActive = false
                     keyE(false)
                     if promptTarget then restorePrompt(promptTarget); promptTarget = nil end
                     if not (S.eatTrees or S.eatMeatOn) then status(H.foodStatus, "Food: idle") end
