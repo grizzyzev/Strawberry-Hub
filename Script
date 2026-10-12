@@ -27,7 +27,7 @@ local function getGameName()
     return "HUMANS! Primeval Earth | Dinosaur Survival"
 end
 
-local VERSION = "v1.37.1"
+local VERSION = "v1.37.2"
 
 for _, env in ipairs({genv, _G}) do
     local old = env.StrawberryUnload
@@ -4321,7 +4321,12 @@ do
         on = (on and running and H.themeName == "Halloween") and true or false
         raining = on
         pcall(function() rainGui.DisplayOrder = math.max(gui.DisplayOrder - 1, 0) end)
-        local wantCursor = on and UIS.MouseEnabled
+        local mobile = UIS.TouchEnabled and (not UIS.MouseEnabled or not UIS.KeyboardEnabled)
+        pcall(function()
+            local pf = UIS:GetPlatform()
+            if pf == Enum.Platform.Android or pf == Enum.Platform.IOS then mobile = true end
+        end)
+        local wantCursor = on and UIS.MouseEnabled and not mobile
         if wantCursor and not cursorOn then
             savedIcon = UIS.MouseIconEnabled
         elseif cursorOn and not wantCursor then
@@ -4552,49 +4557,105 @@ menuBtn.Position = UDim2.new(0, 46, 0.5, 0)
 menuBtn.Text = ""
 menuBtn.AutoButtonColor = false
 menuBtn.BorderSizePixel = 0
-menuBtn.BackgroundColor3 = Color3.fromRGB(255, 70, 110)
 menuBtn.Visible = false
 menuBtn.ZIndex = 50
 menuBtn.Parent = gui
+skin(menuBtn, "BackgroundColor3", "Window")
 do
+    local berry, tag
     local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(1, 0)
+    corner.CornerRadius = UDim.new(0, 18)
     corner.Parent = menuBtn
-    local grad = Instance.new("UIGradient")
-    grad.Rotation = 90
-    grad.Color = ColorSequence.new(Color3.fromRGB(255, 120, 150), Color3.fromRGB(200, 30, 70))
-    grad.Parent = menuBtn
+
     local ring = Instance.new("UIStroke")
     ring.Color = WHITE
     ring.Thickness = 2
-    ring.Transparency = 0.15
     ring.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
     ring.Parent = menuBtn
+    local ringGrad = Instance.new("UIGradient")
+    ringGrad.Parent = ring
+    bind(function()
+        ringGrad.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Theme.Accent),
+            ColorSequenceKeypoint.new(0.5, Theme.Accent:Lerp(WHITE, 0.6)),
+            ColorSequenceKeypoint.new(1, Theme.Accent),
+        })
+    end)
 
-    local berry = Instance.new("TextLabel")
-    berry.Size = UDim2.new(1, 0, 1, -10)
+    local halo = Instance.new("Frame")
+    halo.Name = "Halo"
+    halo.AnchorPoint = Vector2.new(0.5, 0.5)
+    halo.Position = UDim2.fromScale(0.5, 0.5)
+    halo.Size = UDim2.fromScale(1, 1)
+    halo.BackgroundTransparency = 1
+    halo.BorderSizePixel = 0
+    halo.ZIndex = 49
+    halo.Parent = menuBtn
+    skin(halo, "BackgroundColor3", "Accent")
+    do
+        local hc = Instance.new("UICorner")
+        hc.CornerRadius = UDim.new(0, 22)
+        hc.Parent = halo
+    end
+
+    local chip = Instance.new("Frame")
+    chip.Size = UDim2.fromOffset(36, 36)
+    chip.AnchorPoint = Vector2.new(0.5, 0)
+    chip.Position = UDim2.new(0.5, 0, 0, 6)
+    chip.BorderSizePixel = 0
+    chip.ZIndex = 51
+    chip.Parent = menuBtn
+    skin(chip, "BackgroundColor3", "Accent")
+    do
+        local cc = Instance.new("UICorner")
+        cc.CornerRadius = UDim.new(0, 11)
+        cc.Parent = chip
+        local cg = Instance.new("UIGradient")
+        cg.Rotation = 90
+        cg.Color = ColorSequence.new(WHITE, Color3.fromRGB(200, 200, 200))
+        cg.Parent = chip
+    end
+
+    berry = Instance.new("TextLabel")
+    berry.Size = UDim2.fromScale(1, 1)
     berry.BackgroundTransparency = 1
     berry.Text = "\240\159\141\147"
-    berry.TextScaled = true
+    berry.TextSize = 22
     berry.Font = Enum.Font.GothamBold
-    berry.ZIndex = 51
-    berry.Parent = menuBtn
-    local pad = Instance.new("UIPadding")
-    pad.PaddingTop = UDim.new(0, 6)
-    pad.PaddingLeft = UDim.new(0, 8)
-    pad.PaddingRight = UDim.new(0, 8)
-    pad.Parent = berry
+    berry.ZIndex = 52
+    berry.Parent = chip
 
-    local tag = Instance.new("TextLabel")
+    tag = Instance.new("TextLabel")
     tag.Size = UDim2.new(1, 0, 0, 12)
-    tag.Position = UDim2.new(0, 0, 1, -14)
+    tag.Position = UDim2.new(0, 0, 1, -15)
     tag.BackgroundTransparency = 1
-    tag.Text = "MENU"
+    tag.Text = "OPEN"
     tag.TextSize = 10
     tag.Font = Enum.Font.GothamBold
-    tag.TextColor3 = WHITE
     tag.ZIndex = 51
     tag.Parent = menuBtn
+    skin(tag, "TextColor3", "Text")
+
+    task.spawn(function()
+        while running do
+            if menuBtn.Visible then
+                ringGrad.Rotation = (ringGrad.Rotation + 3) % 360
+                local open = H.guiOpenNow and true or false
+                local want = open and "CLOSE" or "OPEN"
+                if tag.Text ~= want then tag.Text = want end
+                if not open and not halo:GetAttribute("Pulsing") then
+                    halo:SetAttribute("Pulsing", true)
+                    halo.Size = UDim2.fromScale(1, 1)
+                    halo.BackgroundTransparency = 0.55
+                    tween(halo, 1.2, {Size = UDim2.fromScale(1.45, 1.45), BackgroundTransparency = 1}, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+                    task.delay(1.6, function() halo:SetAttribute("Pulsing", false) end)
+                end
+                task.wait(1 / 30)
+            else
+                task.wait(0.5)
+            end
+        end
+    end)
 
     local btnScale = Instance.new("UIScale")
     btnScale.Parent = menuBtn
@@ -7321,7 +7382,6 @@ end)
     local tag = tostring(1000 + (player.UserId % 9000))
     local handle = isOwner and "Owner" or (H.isAdmin and "Admin" or ("User" .. tag))
 
-    local joinTime = os.time()
 
     local function req()
         local g = (getgenv and getgenv()) or _G
@@ -7776,6 +7836,7 @@ end)
 
 
     local shownKeys, shownSet, pending = {}, {}, {}
+    local oldKeys, baselineDone = {}, false
     local lastMuteSig = ""
 
     local function scrollBottom()
@@ -7796,7 +7857,7 @@ end)
     local function render(data)
         local keys = {}
         for k, m in pairs(data) do
-            if type(m) == "table" and m.m and type(m.t) == "number" and m.t >= joinTime
+            if type(m) == "table" and m.m and type(m.t) == "number" and not oldKeys[k]
                 and not mutes[tostring(m.n or "")] then
                 keys[#keys + 1] = k
             end
@@ -7873,6 +7934,8 @@ end)
             scrollBottom()
         end
     end
+
+    local lastAnnounce = nil
 
     local function agoText(t)
         local d = math.max(0, os.time() - (tonumber(t) or os.time()))
@@ -7995,7 +8058,9 @@ end)
             if H.toast then pcall(H.toast, "Chat Cleared", "Hub Chat history was wiped.", 4) end
         elseif cmd == "announce" then
             if rest == "" then status("Usage: /announce your message", false); return end
-            task.spawn(function() call("PUT", "/announce.json", {m = string.sub(rest, 1, 160), t = os.time(), by = handle}) end)
+            local aid = sid .. "-" .. tostring(math.floor(os.clock() * 1000))
+            lastAnnounce = aid
+            task.spawn(function() call("PUT", "/announce.json", {m = string.sub(rest, 1, 160), t = os.time(), by = handle, id = aid}) end)
             if H.toast then pcall(H.toast, "Announcement Sent", rest, 4) end
         elseif cmd == "muted" then
             if mutedPanel and not mutedPanel.Visible then
@@ -8010,7 +8075,6 @@ end)
         end
     end
 
-    local lastAnnounce = nil
 
     task.spawn(function()
         local lastFetch = 0
@@ -8023,8 +8087,14 @@ end)
                 pcall(function()
                     local raw = call("GET", "/chat.json?orderBy=%22%24key%22&limitToLast=40")
                     local chat = decode(raw)
-                    if type(chat) == "table" then render(chat)
-                    elseif raw == "null" then render({}) end
+                    if type(chat) == "table" or raw == "null" then
+                        chat = type(chat) == "table" and chat or {}
+                        if not baselineDone then
+                            baselineDone = true
+                            for k in pairs(chat) do oldKeys[k] = true end
+                        end
+                        render(chat)
+                    end
                 end)
                 for i = #pending, 1, -1 do
                     if os.clock() - pending[i].t > 10 then
@@ -8106,9 +8176,16 @@ end)
                     end
                 end)
                 task.spawn(function()
-                    local an = decode(call("GET", "/announce.json"))
-                    if type(an) == "table" and type(an.t) == "number" and an.t >= joinTime and an.t ~= lastAnnounce then
-                        lastAnnounce = an.t
+                    local raw = call("GET", "/announce.json")
+                    if raw == nil then return end
+                    local an = decode(raw)
+                    local id = (type(an) == "table") and tostring(an.id or an.t or "") or ""
+                    if lastAnnounce == nil then
+                        lastAnnounce = id
+                        return
+                    end
+                    if type(an) == "table" and id ~= "" and id ~= lastAnnounce then
+                        lastAnnounce = id
                         if H.toast then pcall(H.toast, (an.by == "Admin" and "Admin" or "Owner") .. " Announcement", tostring(an.m or ""), 10) end
                     end
                 end)
