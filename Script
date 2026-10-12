@@ -16,7 +16,7 @@ local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local genv = (getgenv and getgenv()) or _G
 
-local VERSION = "v1.26.6"
+local VERSION = "v1.26.8"
 
 for _, env in ipairs({genv, _G}) do
     local old = env.StrawberryUnload
@@ -1600,65 +1600,6 @@ do
     H.getSpecies = getSpecies
 
     ----------------------------------------------------------------------
-    -- FOSSILS (exact amount, with thousands separators)
-    ----------------------------------------------------------------------
-    local function formatNumber(n)
-        local str = string.format("%.0f", n)
-        local sign, digits = string.match(str, "^(-?)(%d+)$")
-        if not digits then return str end
-        local rev = string.reverse(digits)
-        rev = string.gsub(rev, "(%d%d%d)", "%1,")
-        rev = string.gsub(rev, ",$", "")
-        return sign .. string.reverse(rev)
-    end
-
-    -- returns number, approximate?  (approximate = the game only stores an abbreviated text like "1.14M")
-    local function parseFossil(v)
-        if type(v) == "number" then return v, false end
-        if type(v) == "string" then
-            local clean = string.gsub(v, ",", "")
-            local n = tonumber(clean)
-            if n then return n, false end
-            local num, suf = string.match(clean, "^%s*([%d%.]+)%s*([KkMmBbTt])%s*$")
-            if num and tonumber(num) then
-                local mult = ({k = 1e3, m = 1e6, b = 1e9, t = 1e12})[string.lower(suf)]
-                return tonumber(num) * mult, true
-            end
-        end
-        return nil
-    end
-
-    local fossilState = {pick = nil, nextScan = 0}
-
-    local function findFossils()
-        local p = fossilState.pick
-        if p then
-            local ok, v = pcall(p.read)
-            if ok and v ~= nil and p.inst and p.inst.Parent then
-                local n, approx = parseFossil(v)
-                if n then return n, approx end
-            end
-            fossilState.pick = nil
-        end
-        local now = os.clock()
-        if now < fossilState.nextScan then return nil end
-        fossilState.nextScan = now + 3
-
-        local cands = gather(function(name, v)
-            return string.find(string.lower(name), "fossil", 1, true) ~= nil and parseFossil(v) ~= nil
-        end)
-        if #cands == 0 then return nil end
-
-        local best = cands[1]
-        for _, c in ipairs(cands) do
-            local l = string.lower(c.name)
-            if l == "fossils" or l == "fossil" then best = c; break end
-        end
-        fossilState.pick = best
-        return parseFossil(best.value)
-    end
-
-    ----------------------------------------------------------------------
     -- STAGE TEXT (what the game itself shows on your screen)
     ----------------------------------------------------------------------
     local STAGE_ALIASES = {
@@ -2017,7 +1958,8 @@ do
         createLabel(prof, "Also hides your name in Roblox's menu, player list and chat.", 30)
 
         local hpBar = createBar(prof, 16)
-        local fossilL = createLabel(prof, "Fossils: -", 18, true)
+        local fossilL = createLabel(prof, "Fossils: searching...", 18, true)
+        H.fossilProfileL = fossilL
         fossilL.TextSize = 15
         local infoLines = {}
         for i = 1, 7 do infoLines[i] = createLabel(prof, "", 16, true) end
@@ -2149,16 +2091,8 @@ do
                     infoLines[6].Text = "Session: " .. fmtTime(os.clock() - sessionStart)
                     infoLines[7].Text = "Server: " .. (anon and "hidden" or string.sub(game.JobId, 1, 8))
 
-                    if H.fossilDisplay then
-                        fossilL.Text = "Fossils: " .. H.fossilDisplay
-                    else
-                        local fv, fapprox = findFossils()
-                        if fv then
-                            fossilL.Text = "Fossils: " .. (fapprox and "~" or "") .. formatNumber(fv)
-                        elseif not fossilState.pick then
-                            fossilL.Text = "Fossils: searching..."
-                        end
-                    end
+                    -- same number as the Fossils box (checked against your screen), never a random value
+                    fossilL.Text = "Fossils: " .. (H.fossilDisplay or "searching...")
 
                 end)
             end
@@ -5986,7 +5920,11 @@ end)
     local scrLbl, scrNext = nil, 0
     local function readLabel(d)
         local txt = string.gsub(d.Text, "<[^>]+>", "")
-        local raw = string.match(txt, "[%d][%d,%.]*%s*[KkMmBbTt]?") or ""
+        -- the label must be JUST the number (maybe with "Fossils:"), so "+2" popups, "x2", "2/5", "Lv 2" are ignored
+        local rest = string.gsub(string.lower(txt), "fossils?", "")
+        rest = string.gsub(rest, "[:%s]", "")
+        local raw = string.match(rest, "^%d[%d,%.]*[kmbt]?$")
+        if not raw then return nil end
         local num, approx = parse(raw)
         if not num then return nil end
         local tol = 0
@@ -5997,14 +5935,30 @@ end)
         end
         return {n = num, approx = approx, tol = tol, src = "screen (" .. d.Name .. ")", lbl = d}
     end
+    local function onScreen(d)
+        local cur = d
+        while cur and cur:IsA("GuiObject") do
+            if not cur.Visible then return false end
+            cur = cur.Parent
+        end
+        return true
+    end
+    local scrRecheck = 0
     local function fromScreen()
-        if scrLbl and scrLbl.Parent and scrLbl.Visible then
+        local now = os.clock()
+        if scrLbl and scrLbl.Parent and scrLbl.Visible and now < scrRecheck then
             local hit = readLabel(scrLbl)
             if hit then return hit end
         end
-        if os.clock() < scrNext then return nil end
-        scrNext = os.clock() + 0.5
-        scrLbl = nil
+        if now < scrNext then
+            if scrLbl and scrLbl.Parent and scrLbl.Visible then return readLabel(scrLbl) end
+            return nil
+        end
+        scrNext = now + 0.2
+        scrRecheck = now + 5        -- look again now and then in case a better label shows up
+        -- every fossil label on screen; the counter is the one with the biggest number
+        -- (a "+2" popup, a quest "2 fossils" or a price never wins against your total)
+        local best, bestLbl = nil, nil
         for _, g in ipairs(playerGui:GetChildren()) do
             if g:IsA("LayerCollector") and g.Enabled and not string.find(g.Name, "Strawberry", 1, true) then
                 for _, d in ipairs(g:GetDescendants()) do
@@ -6012,13 +5966,14 @@ end)
                         local ctx = d.Name .. " " .. (d.Parent and d.Parent.Name or "")
                         if isFossilName(ctx) or (d.Parent and d.Parent:FindFirstChild("FossilIcon")) then
                             local hit = readLabel(d)
-                            if hit then scrLbl = d; return hit end
+                            if hit and onScreen(d) and (not best or hit.n > best.n) then best, bestLbl = hit, d end
                         end
                     end
                 end
             end
         end
-        return nil
+        scrLbl = bestLbl
+        return best
     end
 
     -- "gained" only counts real increases while you play: the first reading, a switch of
@@ -6061,16 +6016,27 @@ end)
         lastL.Text = lastGainT and string.format("Last gain: +%s (%s)", commas(lastGainAmt), fmtAgo(now - lastGainT)) or "Last gain: -"
     end
 
+    local shownN, pendingDrop = nil, nil
     local function update(hit)
         if not hit then
-            big.Text = "not found"
-            srcL.Text = "Source: no fossil value found yet"
+            if shownN then return end   -- keep showing the last good number
+            big.Text = "searching..."
+            srcL.Text = "Source: looking for your fossils..."
             H.fossilDisplay = nil
             return
         end
+        -- a sudden fall to a tiny number (2) is almost always a wrong label for a moment: needs 4s to be believed
+        local tnow = os.clock()
+        if shownN and shownN > 100 and hit.n < shownN * 0.2 then
+            if not pendingDrop or pendingDrop.n ~= hit.n then pendingDrop = {n = hit.n, t = tnow} end
+            if tnow - pendingDrop.t < 4 then return end
+        end
+        pendingDrop = nil
+        shownN = hit.n
         local shown = (hit.approx and "~" or "") .. commas(hit.n)
         big.Text = shown
         H.fossilDisplay = shown
+        if H.fossilProfileL then H.fossilProfileL.Text = "Fossils: " .. shown end
         srcL.Text = "Source: " .. hit.src .. (hit.approx and "\n(rounded by the game, exact value not found)" or "")
         -- follow the NUMBER, whichever source it came from: any rise is a gain,
         -- a drop (spending) just moves the baseline, 0 -> total (data loading) never counts
@@ -6084,16 +6050,20 @@ end)
                 task.delay(0.6, function() pcall(function() big.TextColor3 = Theme.Text end) end)
             end)
         end
+        -- 2 -> 1,140,000 is your real total showing up, not a gain
+        local function realGain(old, new)
+            return new <= old * 3 or new - old < 5000
+        end
         local now = os.clock()
         if hit.approx then
             -- rounded number (1.14M): only used for gains when no exact number is available
             if now - lastExactT > 10 then
-                if approxLast and approxLast > 0 and hit.n > approxLast then addGain(hit.n - approxLast, true) end
+                if approxLast and approxLast > 0 and hit.n > approxLast and realGain(approxLast, hit.n) then addGain(hit.n - approxLast, true) end
                 approxLast = hit.n
             end
         else
             lastExactT = now
-            if exactLast and exactLast > 0 and hit.n > exactLast then addGain(hit.n - exactLast, false) end
+            if exactLast and exactLast > 0 and hit.n > exactLast and realGain(exactLast, hit.n) then addGain(hit.n - exactLast, false) end
             exactLast = hit.n
             approxLast = hit.n
         end
@@ -6111,7 +6081,7 @@ end)
     -- (so it can be exact when the screen says 1.14M, and updates instantly), never a random other value
     local function read()
         local scr = fromScreen()
-        local inst, all = fromInstances()
+        local _inst, all = fromInstances()
         if scr then
             for _, c in ipairs(all or {}) do
                 if not c.approx and agrees(c, scr) then return c end
@@ -6122,8 +6092,16 @@ end)
             if gc then dropGc() end   -- old / wrong script data: look again later
             return scr
         end
-        -- no fossil number on screen: best value we can find
-        return inst or fromGc()
+        -- no fossil number on screen (yet): only a plainly named value ("Fossils", leaderstats ...),
+        -- never a random game table or a quest/reward number
+        for _, c in ipairs(all or {}) do
+            local l = string.lower(c.name)
+            if l == "fossils" or l == "fossil" or l == "totalfossils" or l == "fossilcount"
+                or string.find(string.lower(c.src), "leaderstats", 1, true) then
+                return c
+            end
+        end
+        return nil
     end
 
     -- instant updates: listen to the fossil value itself so a gain shows the moment it happens
@@ -6176,8 +6154,17 @@ end)
         if isFossilName(n) then kick = true end
     end)
 
+    -- right away when the script loads (no waiting for the first loop)
+    pcall(function()
+        scrNext = 0
+        local hit = read()
+        watch(hit)
+        watchScreen()
+        update(hit)
+    end)
+
     task.spawn(function()
-        local lastFull = 0
+        local lastFull = os.clock()
         local started = os.clock()
         while running do
             if kick then
@@ -6193,8 +6180,8 @@ end)
             pcall(function()
                 local now = os.clock()
                 -- full search every 2s (finds the source), fast re-read of game script data in between
-                local searching = not H.fossilDisplay and now - started < 60
-                if now - lastFull >= (watchKey and 4 or (searching and 0.25 or 1)) then
+                local searching = not H.fossilDisplay and now - started < 120
+                if now - lastFull >= (watchKey and 4 or (searching and 0.2 or 1)) then
                     lastFull = now
                     local hit = read()
                     watch(hit)
@@ -6211,7 +6198,7 @@ end)
                     refreshRates()
                 end
             end)
-            task.wait(0.25)
+            task.wait(H.fossilDisplay and 0.25 or 0.1)
         end
         if watchConn then watchConn:Disconnect() end
     end)
@@ -7741,7 +7728,46 @@ end)
     local stat = {}             -- key -> {lo, hi, n = changes, last, t = last change, up = rises while eating}
     local sigNext = 0
     local activeKey = nil
+    -- Primeval Earth: the hunger NUMBER (e.g. 410) lives here, the bar is GameUI.Stats.Hunger.Bar
+    local GAME_KEY = "n|GameUI.Stats.Container.Hunger.Amount"
     local savedKey = nil        -- the part that moved last time (saved in your config)
+    -- your "full" per dinosaur, remembered between sessions (StrawberryHub/hunger.json)
+    local HUNGER_FILE = DIR .. "/hunger.json"
+    local fullStore = {}        -- species -> {k = key, v = full value}
+    if hasFS then
+        pcall(function()
+            if isfile(HUNGER_FILE) then
+                local d = game:GetService("HttpService"):JSONDecode(readfile(HUNGER_FILE))
+                if type(d) == "table" then fullStore = d end
+            end
+        end)
+    end
+    local function speciesKey()
+        local okS, sp = pcall(function() return H.getSpecies and H.getSpecies() end)
+        return (okS and type(sp) == "string" and sp ~= "") and sp or "any"
+    end
+    local lastSaved = {}
+    local function rememberFull(key, v)
+        local sp = speciesKey()
+        local cur = fullStore[sp]
+        if type(cur) == "table" and cur.k == key and cur.v == v then return end
+        fullStore[sp] = {k = key, v = v}
+        if not hasFS then return end
+        -- write at most every 5s
+        local now = os.clock()
+        if lastSaved.t and now - lastSaved.t < 5 then lastSaved.dirty = true; return end
+        lastSaved.t = now
+        lastSaved.dirty = false
+        pcall(function()
+            ensureFolders()
+            writefile(HUNGER_FILE, game:GetService("HttpService"):JSONEncode(fullStore))
+        end)
+    end
+    local function storedFull(key)
+        local e = fullStore[speciesKey()]
+        if type(e) == "table" and e.k == key and type(e.v) == "number" then return e.v end
+        return nil
+    end
     local calSnap = {}          -- "I'm Full Now": every value at the moment you were full
     local learned = {}          -- key -> full value learned while eating
     local calRaw = nil          -- old style fallback
@@ -7886,18 +7912,26 @@ end)
         return st
     end
     local function score(sg, st, now)
-        if st.n < 3 then return 0 end
+        local kind: string = sg.k
+        local minChanges = (sg.k == "n") and 2 or 3
+        if st.n < minChanges then return 0 end
         local range = st.hi - st.lo
-        if (sg.k == "n" and not sg.def) or sg.k == "r" then range = range / math.max(math.abs(st.hi), 1) end
+        if kind == "n" and not sg.def then
+            -- a plain number in the hunger bar (410 -> 405): any change is real, lock on quickly
+            if range <= 0 then return 0 end
+            range = math.max(range / math.max(math.abs(st.hi), 1), 0.02)
+        elseif kind == "r" then
+            range = range / math.max(math.abs(st.hi), 1)
+        end
         if range < 0.01 then return 0 end
         local sc = range * math.min(st.n, 20) * (sg.bias or 1) * (1 + math.min(st.up, 10))
-        if sg.k == "p" or sg.k == "g" then sc = sc * 0.5 end
-        if sg.k == "s" then sc = sc * 0.9 end
+        if kind == "p" or kind == "g" then sc = sc * 0.5 end
+        if kind == "s" then sc = sc * 0.9 end
         if now - st.t > 180 then sc = sc * 0.3 end   -- moved once long ago (an animation), not hunger
         return sc
     end
     local function emptyFull(sg, st)
-        local full = calSnap[sg.key] or learned[sg.key]
+        local full = calSnap[sg.key] or learned[sg.key] or storedFull(sg.key)
         if not full then
             local k = sg.k
             if k == "w" then
@@ -7922,17 +7956,22 @@ end)
         local now = os.clock()
         local best, bestSc, bestV, bestSt = nil, 0, nil, nil
         local saved, savedV, savedSt = nil, nil, nil
+        local gameSig, gameV, gameSt = nil, nil, nil
         for _, sg in ipairs(sigs) do
             local okv, v = pcall(sigValue, sg)
             if okv and type(v) == "number" and v == v then
                 local st = track(sg, v, now)
                 local sc = score(sg, st, now)
                 if sg.key == activeKey then sc = sc * 1.3 end   -- don't flip between two parts
+                if sg.key == GAME_KEY then sc = sc * 3 end
                 if sc > bestSc then best, bestSc, bestV, bestSt = sg, sc, v, st end
                 if sg.key == savedKey then saved, savedV, savedSt = sg, v, st end
+                if sg.key == GAME_KEY then gameSig, gameV, gameSt = sg, v, st end
             end
         end
         if not best and saved then best, bestV, bestSt = saved, savedV, savedSt end
+        -- nothing moved yet: this game's hunger number, straight away
+        if not best and gameSig then best, bestV, bestSt = gameSig, gameV, gameSt end
         if not best or not bestSt then return nil end
         if activeKey ~= best.key then
             activeKey = best.key
@@ -7948,6 +7987,7 @@ end)
             local e0 = emptyFull(best, bestSt)
             if rose and now - lastRiseT > 5 and not calSnap[best.key] and v > e0 then
                 learned[best.key] = v
+                rememberFull(best.key, v)
                 rose = false
             end
         else
@@ -7956,8 +7996,10 @@ end)
         local empty, full = emptyFull(best, bestSt)
         if v > full + math.abs(full - empty) * 0.01 then   -- went further than "full": you can hold more now
             if calSnap[best.key] then calSnap[best.key] = v else learned[best.key] = v end
+            rememberFull(best.key, v)
             empty, full = emptyFull(best, bestSt)
         end
+        if lastSaved.dirty and calSnap[best.key] == nil and learned[best.key] then rememberFull(best.key, learned[best.key]) end
         if full - empty <= 0.0001 then return nil end
         hungerSrc = "HUD live '" .. shortKey(best.key) .. "'"
         return math.clamp((v - empty) / (full - empty), 0, 1)
@@ -7993,6 +8035,11 @@ end)
         end
         local raw = rawHunger()
         if raw and raw > 0.05 then calRaw = raw; any = true end
+        local key = (activeKey and calSnap[activeKey]) and activeKey or (calSnap[GAME_KEY] and GAME_KEY) or nil
+        if key then
+            lastSaved.t = nil
+            rememberFull(key, calSnap[key])
+        end
         return any
     end
     -- for "Copy Hunger Info": what the script sees, so it can be fixed for your game
@@ -8000,7 +8047,8 @@ end)
         pcall(ensureSigs)
         local now = os.clock()
         local out = {"Strawberry Hub " .. VERSION .. " hunger info", "source: " .. tostring(hungerSrc),
-            "active: " .. tostring(activeKey), "eating: " .. tostring(H.eatingActive)}
+            "active: " .. tostring(activeKey), "eating: " .. tostring(H.eatingActive),
+            "dino: " .. speciesKey() .. "  saved full: " .. tostring(activeKey and storedFull(activeKey))}
         local rows = {}
         for _, sg in ipairs(sigs) do
             local st = stat[sg.key]
