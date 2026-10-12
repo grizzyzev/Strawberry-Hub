@@ -16,7 +16,7 @@ local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local genv = (getgenv and getgenv()) or _G
 
-local VERSION = "v1.27.0"
+local VERSION = "v1.27.1"
 
 for _, env in ipairs({genv, _G}) do
     local old = env.StrawberryUnload
@@ -6220,7 +6220,7 @@ end)
 -- so every copy of the script talks to the same place.
 ----------------------------------------------------------------------
 ;safeRun(function()
-    local DEFAULT_SERVER = ""   -- <<< OWNER: paste your Firebase Realtime Database URL here
+    local DEFAULT_SERVER = "https://generalchat-e5ddb-default-rtdb.firebaseio.com"   -- OWNER's Firebase Realtime Database
 
     local server = trim(DEFAULT_SERVER)
     local isOwner = player.UserId == H.OWNER_ID
