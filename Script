@@ -27,7 +27,7 @@ local function getGameName()
     return "HUMANS! Primeval Earth | Dinosaur Survival"
 end
 
-local VERSION = "v1.36.0"
+local VERSION = "v1.37.1"
 
 for _, env in ipairs({genv, _G}) do
     local old = env.StrawberryUnload
@@ -51,6 +51,8 @@ local H = anyTbl({})
 
 
 H.OWNER_ID = 2038953612
+H.ADMIN_IDS = {[5857103457] = true}
+H.isAdmin = H.ADMIN_IDS[player.UserId] == true
 H.nameOf = function(plr)
     if not plr then return "?" end
     if plr.UserId == H.OWNER_ID and player.UserId ~= H.OWNER_ID then return "Owner" end
@@ -822,13 +824,15 @@ do
     rk.Size = UDim2.new(1, -78, 0, 13)
     rk.Position = UDim2.fromOffset(44, 24)
     rk.BackgroundTransparency = 1
-    rk.Text = isOwnerP and "Owner" or "Free User"
+    rk.Text = isOwnerP and "Owner" or (H.isAdmin and "Admin" or "Free User")
     rk.TextSize = 11
     rk.Font = Enum.Font.Gotham
     rk.TextXAlignment = Enum.TextXAlignment.Left
     rk.TextTruncate = Enum.TextTruncate.AtEnd
     rk.Parent = pcard
-    if isOwnerP then rk.TextColor3 = Color3.fromRGB(255, 200, 60) else skin(rk, "TextColor3", "Dim") end
+    if isOwnerP then rk.TextColor3 = Color3.fromRGB(255, 200, 60)
+    elseif H.isAdmin then rk.TextColor3 = Color3.fromRGB(90, 170, 255)
+    else skin(rk, "TextColor3", "Dim") end
     H.sideName = dn
 
     local pumpkin = Instance.new("TextLabel")
@@ -1825,49 +1829,135 @@ local function IsThisZoneGreen(targetPos)
 end
 
 local wm = Instance.new("Frame")
+wm.Name = "Watermark"
 wm.AutomaticSize = Enum.AutomaticSize.X
-wm.Size = UDim2.new(0, 0, 0, 22)
+wm.Size = UDim2.new(0, 0, 0, 34)
 wm.Position = UDim2.fromOffset(10, 10)
 wm.BorderSizePixel = 0
 wm.Visible = false
 wm.Parent = gui
 skin(wm, "BackgroundColor3", "Window")
-addStroke(wm, "Border", 1)
+roundify(wm, 10)
 
-local wmLine = Instance.new("Frame")
-wmLine.Size = UDim2.new(1, 0, 0, 2)
-wmLine.BorderSizePixel = 0
-wmLine.Parent = wm
-skin(wmLine, "BackgroundColor3", "Accent")
-
-local wmText = Instance.new("TextLabel")
-wmText.AutomaticSize = Enum.AutomaticSize.X
-wmText.Size = UDim2.new(0, 0, 1, 0)
-wmText.BackgroundTransparency = 1
-wmText.Text = "Strawberry Hub"
-wmText.TextSize = 13
-wmText.Font = FONT
-wmText.Parent = wm
-skin(wmText, "TextColor3", "Text")
 do
-    local p = Instance.new("UIPadding")
-    p.PaddingLeft = UDim.new(0, 8)
-    p.PaddingRight = UDim.new(0, 8)
-    p.PaddingTop = UDim.new(0, 2)
-    p.Parent = wmText
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 1.5
+    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    stroke.Color = WHITE
+    stroke.Parent = wm
+    local grad = Instance.new("UIGradient")
+    grad.Parent = stroke
+    bind(function()
+        grad.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Theme.Accent),
+            ColorSequenceKeypoint.new(0.5, Theme.Border),
+            ColorSequenceKeypoint.new(1, Theme.Accent),
+        })
+    end)
+    task.spawn(function()
+        while running do
+            if wm.Visible then
+                grad.Rotation = (grad.Rotation + 2) % 360
+                task.wait(1 / 30)
+            else
+                task.wait(0.5)
+            end
+        end
+    end)
+
+    local pad = Instance.new("UIPadding")
+    pad.PaddingLeft = UDim.new(0, 6)
+    pad.PaddingRight = UDim.new(0, 12)
+    pad.Parent = wm
+    local list = Instance.new("UIListLayout")
+    list.FillDirection = Enum.FillDirection.Horizontal
+    list.VerticalAlignment = Enum.VerticalAlignment.Center
+    list.Padding = UDim.new(0, 8)
+    list.SortOrder = Enum.SortOrder.LayoutOrder
+    list.Parent = wm
+
+    local order = 0
+    local function nextOrder() order = order + 1; return order end
+
+    local badge = Instance.new("TextLabel")
+    badge.Size = UDim2.fromOffset(24, 24)
+    badge.LayoutOrder = nextOrder()
+    badge.BorderSizePixel = 0
+    badge.Text = "\240\159\141\147"
+    badge.TextSize = 14
+    badge.Font = FONT
+    badge.Parent = wm
+    skin(badge, "BackgroundColor3", "Accent")
+    roundify(badge, 7)
+
+    local function label(text, font, size, key)
+        local l = Instance.new("TextLabel")
+        l.AutomaticSize = Enum.AutomaticSize.X
+        l.Size = UDim2.fromOffset(0, 34)
+        l.BackgroundTransparency = 1
+        l.Text = text
+        l.TextSize = size
+        l.Font = font
+        l.LayoutOrder = nextOrder()
+        l.Parent = wm
+        if key then skin(l, "TextColor3", key) end
+        return l
+    end
+    local function sep()
+        local f = Instance.new("Frame")
+        f.Size = UDim2.fromOffset(1, 16)
+        f.BorderSizePixel = 0
+        f.LayoutOrder = nextOrder()
+        f.Parent = wm
+        skin(f, "BackgroundColor3", "Border")
+    end
+    local function wmIcon(img)
+        local i = Instance.new("ImageLabel")
+        i.Size = UDim2.fromOffset(14, 14)
+        i.BackgroundTransparency = 1
+        i.Image = img
+        i.LayoutOrder = nextOrder()
+        i.Parent = wm
+        skin(i, "ImageColor3", "Dim")
+        return i
+    end
+
+    label("Strawberry Hub", Enum.Font.GothamBold, 13, "Text")
+    label(VERSION, Enum.Font.Gotham, 11, "Accent")
+    sep()
+    wmIcon("rbxassetid://10747373176")
+    local nameL = label("-", Enum.Font.GothamMedium, 12, "Text")
+    sep()
+    wmIcon("rbxassetid://10709752035")
+    local fpsL = label("0", Enum.Font.GothamBold, 12)
+    label("fps", Enum.Font.Gotham, 11, "Dim")
+    sep()
+    wmIcon("rbxassetid://10747382504")
+    local pingL = label("0", Enum.Font.GothamBold, 12)
+    label("ms", Enum.Font.Gotham, 11, "Dim")
+    H.wmParts = {name = nameL, fps = fpsL, ping = pingL}
 end
 
 task.spawn(function()
     local frames, last = 0, tick()
-    connect(RunService.RenderStepped, function() frames = frames + 1 end)
+    local GOOD, MID, BAD = Color3.fromRGB(70, 220, 120), Color3.fromRGB(250, 200, 60), Color3.fromRGB(240, 80, 80)
+    connect(RunService.RenderStepped, function() if S.watermark then frames = frames + 1 end end)
     while running do
         task.wait(0.5)
+        if not S.watermark then frames, last = 0, tick() else
         local now = tick()
         local fps = math.floor(frames / math.max(now - last, 0.01) + 0.5)
         frames, last = 0, now
         local ping = 0
         pcall(function() ping = math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue() + 0.5) end)
-        wmText.Text = string.format("Strawberry Hub %s  |  %s  |  %d fps  |  %d ms", VERSION, shownName(), fps, ping)
+        local parts = H.wmParts
+        local nm = S.anon and "xxxxx" or player.DisplayName
+        if parts.name.Text ~= nm then parts.name.Text = nm end
+        parts.fps.Text = tostring(fps)
+        parts.fps.TextColor3 = fps >= 50 and GOOD or (fps >= 30 and MID or BAD)
+        parts.ping.Text = tostring(ping)
+        parts.ping.TextColor3 = ping <= 100 and GOOD or (ping <= 200 and MID or BAD)
+        end
     end
 end)
 
@@ -3209,13 +3299,14 @@ do
         end
     end
 
+    local FB_AMB = Color3.fromRGB(178, 178, 178)
     local function enforce()
         if S.fullbright then
-            Lighting.Brightness = 2
-            Lighting.ClockTime = 14
-            Lighting.GlobalShadows = false
-            Lighting.Ambient = Color3.fromRGB(178, 178, 178)
-            Lighting.OutdoorAmbient = Color3.fromRGB(178, 178, 178)
+            if Lighting.Brightness ~= 2 then Lighting.Brightness = 2 end
+            if Lighting.ClockTime ~= 14 then Lighting.ClockTime = 14 end
+            if Lighting.GlobalShadows then Lighting.GlobalShadows = false end
+            if Lighting.Ambient ~= FB_AMB then Lighting.Ambient = FB_AMB end
+            if Lighting.OutdoorAmbient ~= FB_AMB then Lighting.OutdoorAmbient = FB_AMB end
         end
         if S.noFog then
             onFogChanged()
@@ -3497,16 +3588,24 @@ connect(RunService.Heartbeat, function()
     end
 end)
 
-connect(RunService.Stepped, function()
-    if S.noclip or S.zoneNoclip then
+do
+    local ncChar, ncParts, ncT = nil, {}, 0
+    connect(RunService.Stepped, function()
+        if not (S.noclip or S.zoneNoclip) then return end
         local char = player.Character
-        if char then
+        if not char then return end
+        local now = os.clock()
+        if char ~= ncChar or now - ncT > 1 then
+            ncChar, ncT, ncParts = char, now, {}
             for _, p in ipairs(char:GetDescendants()) do
-                if p:IsA("BasePart") and p.CanCollide then p.CanCollide = false end
+                if p:IsA("BasePart") then ncParts[#ncParts + 1] = p end
             end
         end
-    end
-end)
+        for _, p in ipairs(ncParts) do
+            if p.CanCollide then p.CanCollide = false end
+        end
+    end)
+end
 
 connect(UIS.JumpRequest, function()
     if S.infJump then
@@ -4087,7 +4186,7 @@ do
         p.Position = UDim2.new(x, 0, -0.05, 0)
         p.BackgroundTransparency = 1
         p.Text = H.PUMPKIN
-        p.TextScaled = true
+        p.TextSize = sz
         p.Font = FONT
         p.TextTransparency = 1
         p.Rotation = math.random(-40, 40)
@@ -4106,9 +4205,9 @@ do
 
     task.spawn(function()
         while running do
-            if raining and alive < 45 then
+            if raining and alive < 32 then
                 pcall(drop)
-                task.wait(0.1 + math.random() * 0.12)
+                task.wait(0.14 + math.random() * 0.14)
             else
                 task.wait(0.25)
             end
@@ -7214,12 +7313,13 @@ end)
 
     local server = trim(DEFAULT_SERVER)
     local isOwner = player.UserId == H.OWNER_ID
+    local isMod = isOwner or H.isAdmin
 
 
     math.randomseed(os.clock() * 1e6 + player.UserId % 100000)
     local sid = tostring(math.random(100000, 999999)) .. tostring(os.time() % 100000)
     local tag = tostring(1000 + (player.UserId % 9000))
-    local handle = isOwner and "Owner" or ("User" .. tag)
+    local handle = isOwner and "Owner" or (H.isAdmin and "Admin" or ("User" .. tag))
 
     local joinTime = os.time()
 
@@ -7355,10 +7455,15 @@ end)
         st.TextTruncate = Enum.TextTruncate.AtEnd
         st.Parent = head
         skin(st, "TextColor3", "Dim")
+        if subText == "" then
+            st.Visible = false
+            t.Position = UDim2.fromOffset(48, 9)
+        end
         return head
     end
     H.panelHead = panelHead
-    panelHead(box, "rbxassetid://10734888000", "Hub Chat", "Talk with other Strawberry Hub users  |  clears every session")
+    local chatHead = panelHead(box, "rbxassetid://10734888000", "Hub Chat",
+        isMod and ((isOwner and "Owner" or "Admin") .. " moderator  |  type /help for commands") or "Talk with other Strawberry Hub users  |  clears every session")
 
     local segBtns = {}
     local function setMode(m)
@@ -7486,6 +7591,82 @@ end)
         sendBtn.MouseLeave:Connect(function() tween(si, 0.12, {Rotation = 0, Size = UDim2.fromOffset(18, 18)}) end)
     end
 
+    local mutes = {}
+    local muteBtn, muteCount, mutedPanel, mutedList
+    local refreshMuted
+    if isMod then
+        muteBtn = Instance.new("TextButton")
+        muteBtn.AnchorPoint = Vector2.new(1, 0.5)
+        muteBtn.Position = UDim2.new(1, 0, 0.5, 0)
+        muteBtn.Size = UDim2.fromOffset(96, 28)
+        muteBtn.BorderSizePixel = 0
+        muteBtn.Text = ""
+        muteBtn.AutoButtonColor = false
+        muteBtn.Parent = chatHead
+        skin(muteBtn, "BackgroundColor3", "Control")
+        addStroke(muteBtn, "Border", 1)
+        roundify(muteBtn, 8)
+        local mi = Instance.new("ImageLabel")
+        mi.Size = UDim2.fromOffset(14, 14)
+        mi.AnchorPoint = Vector2.new(0, 0.5)
+        mi.Position = UDim2.new(0, 10, 0.5, 0)
+        mi.BackgroundTransparency = 1
+        mi.Image = "rbxassetid://10747375880"
+        mi.Parent = muteBtn
+        skin(mi, "ImageColor3", "Accent")
+        muteCount = Instance.new("TextLabel")
+        muteCount.Size = UDim2.new(1, -30, 1, 0)
+        muteCount.Position = UDim2.fromOffset(28, 0)
+        muteCount.BackgroundTransparency = 1
+        muteCount.Text = "Muted (0)"
+        muteCount.TextSize = 12
+        muteCount.Font = Enum.Font.GothamBold
+        muteCount.TextXAlignment = Enum.TextXAlignment.Left
+        muteCount.Parent = muteBtn
+        skin(muteCount, "TextColor3", "Text")
+
+        mutedPanel = Instance.new("Frame")
+        mutedPanel.Size = UDim2.new(1, 0, 0, 300)
+        mutedPanel.BorderSizePixel = 0
+        mutedPanel.Visible = false
+        mutedPanel.Parent = box
+        mutedPanel.LayoutOrder = feed.LayoutOrder
+        skin(mutedPanel, "BackgroundColor3", "Inner")
+        addStroke(mutedPanel, "Border", 1)
+        roundify(mutedPanel, 10)
+        local mt = Instance.new("TextLabel")
+        mt.Size = UDim2.new(1, -24, 0, 30)
+        mt.Position = UDim2.fromOffset(12, 6)
+        mt.BackgroundTransparency = 1
+        mt.Text = "Muted users"
+        mt.TextSize = 14
+        mt.Font = Enum.Font.GothamBold
+        mt.TextXAlignment = Enum.TextXAlignment.Left
+        mt.Parent = mutedPanel
+        skin(mt, "TextColor3", "Text")
+        mutedList = Instance.new("ScrollingFrame")
+        mutedList.Size = UDim2.new(1, -24, 1, -48)
+        mutedList.Position = UDim2.fromOffset(12, 38)
+        mutedList.BackgroundTransparency = 1
+        mutedList.BorderSizePixel = 0
+        mutedList.ScrollBarThickness = 3
+        mutedList.CanvasSize = UDim2.new(0, 0, 0, 0)
+        mutedList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        mutedList.Parent = mutedPanel
+        skin(mutedList, "ScrollBarImageColor3", "Accent")
+        local ml = Instance.new("UIListLayout")
+        ml.Padding = UDim.new(0, 6)
+        ml.SortOrder = Enum.SortOrder.LayoutOrder
+        ml.Parent = mutedList
+
+        muteBtn.Activated:Connect(function()
+            local open = not mutedPanel.Visible
+            mutedPanel.Visible = open
+            feed.Visible = not open
+            if open and refreshMuted then refreshMuted() end
+        end)
+    end
+
     local statusL = createLabel(box, "", 16)
     statusL.RichText = true
 
@@ -7505,6 +7686,7 @@ end)
         who = string.gsub(who, "^\240\159\141\147 ", "")
         m.n = who
         local owner = (who == "Owner")
+        local admin = (who == "Admin")
         local mine = (m.s ~= nil and m.s == sid)
 
         local rowF = Instance.new("Frame")
@@ -7519,11 +7701,11 @@ end)
         av.Size = UDim2.fromOffset(30, 30)
         av.AnchorPoint = Vector2.new(mine and 1 or 0, 0)
         av.Position = mine and UDim2.new(1, 0, 0, 0) or UDim2.new(0, 0, 0, 0)
-        av.BackgroundColor3 = owner and Color3.fromRGB(240, 190, 60) or (mine and Theme.Accent or Theme.Hover)
-        av.Text = owner and "O" or string.upper(string.sub(who, 1, 1))
+        av.BackgroundColor3 = owner and Color3.fromRGB(240, 190, 60) or (admin and Color3.fromRGB(90, 170, 255) or (mine and Theme.Accent or Theme.Hover))
+        av.Text = owner and "O" or (admin and "A" or string.upper(string.sub(who, 1, 1)))
         av.TextSize = 14
         av.Font = Enum.Font.GothamBold
-        av.TextColor3 = (owner or mine) and DARK or Theme.Text
+        av.TextColor3 = (owner or admin or mine) and DARK or Theme.Text
         av.Parent = rowF
         do local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(1, 0); c.Parent = av end
 
@@ -7556,7 +7738,7 @@ end)
             nameL.Text = who
             nameL.TextSize = 12
             nameL.Font = Enum.Font.GothamBold
-            nameL.TextColor3 = owner and Color3.fromRGB(255, 210, 63) or Theme.Accent
+            nameL.TextColor3 = owner and Color3.fromRGB(255, 210, 63) or (admin and Color3.fromRGB(90, 170, 255) or Theme.Accent)
             nameL.TextXAlignment = Enum.TextXAlignment.Left
             nameL.LayoutOrder = 1
             nameL.Parent = b
@@ -7589,26 +7771,14 @@ end)
             timeL.LayoutOrder = 3
             timeL.Parent = b
         end
+        return rowF, b
     end
 
 
-    local function render(data)
-        for _, c in ipairs(feed:GetChildren()) do
-            if c:IsA("Frame") then c:Destroy() end
-        end
-        local keys = {}
-        for k in pairs(data) do keys[#keys + 1] = k end
-        table.sort(keys)
-        local shown = 0
-        for _, k in ipairs(keys) do
-            local m = data[k]
-            if type(m) == "table" and m.m and type(m.t) == "number" and m.t >= joinTime then
-                shown = shown + 1
-                pcall(bubble, m)
-            end
-        end
-        hintL.Parent = (shown == 0) and feed or nil
-        if shown == 0 then hintL.Text = "<b>No messages yet</b>\n<font size=\"12\">Say hi to other Strawberry Hub users!</font>" end
+    local shownKeys, shownSet, pending = {}, {}, {}
+    local lastMuteSig = ""
+
+    local function scrollBottom()
         task.defer(function()
             pcall(function()
                 feed.CanvasPosition = Vector2.new(0, math.max(0, feedLayout.AbsoluteContentSize.Y))
@@ -7616,17 +7786,278 @@ end)
         end)
     end
 
+    local function muteSig()
+        local t = {}
+        for k in pairs(mutes) do t[#t + 1] = k end
+        table.sort(t)
+        return table.concat(t, ",")
+    end
+
+    local function render(data)
+        local keys = {}
+        for k, m in pairs(data) do
+            if type(m) == "table" and m.m and type(m.t) == "number" and m.t >= joinTime
+                and not mutes[tostring(m.n or "")] then
+                keys[#keys + 1] = k
+            end
+        end
+        table.sort(keys)
+
+        local sig = muteSig()
+        local rebuild = sig ~= lastMuteSig
+        lastMuteSig = sig
+        local lastKey = shownKeys[#shownKeys]
+        if not rebuild and lastKey then
+            for _, k in ipairs(keys) do
+                if not shownSet[k] and k < lastKey then rebuild = true; break end
+            end
+        end
+
+        if rebuild then
+            for _, c in ipairs(feed:GetChildren()) do
+                if c:IsA("Frame") then c:Destroy() end
+            end
+            shownKeys, shownSet, pending = {}, {}, {}
+        else
+            local present = {}
+            for _, k in ipairs(keys) do present[k] = true end
+            local kept = {}
+            for _, k in ipairs(shownKeys) do
+                if present[k] then
+                    kept[#kept + 1] = k
+                else
+                    pcall(function() shownSet[k]:Destroy() end)
+                    shownSet[k] = nil
+                end
+            end
+            shownKeys = kept
+        end
+
+        local added = false
+        for _, k in ipairs(keys) do
+            if not shownSet[k] then
+                local m = data[k]
+                local reused = nil
+                for i = #pending, 1, -1 do
+                    local pd = pending[i]
+                    if m.s == sid and m.m == pd.txt then
+                        reused = pd.f
+                        if pd.b then pcall(function() tween(pd.b, 0.15, {BackgroundTransparency = 0}) end) end
+                        table.remove(pending, i)
+                        break
+                    end
+                end
+                if reused then
+                    shownSet[k] = reused
+                else
+                    local ok, f = pcall(bubble, m)
+                    shownSet[k] = (ok and f) or true
+                    added = true
+                end
+                shownKeys[#shownKeys + 1] = k
+            end
+        end
+
+        local total = #shownKeys + #pending
+        hintL.Parent = (total == 0) and feed or nil
+        if total == 0 then hintL.Text = "<b>No messages yet</b>\n<font size=\"12\">Say hi to other Strawberry Hub users!</font>" end
+        if added or rebuild then scrollBottom() end
+    end
+
+    local function echo(txt)
+        local ok, f, bb = pcall(bubble, {n = handle, m = txt, t = os.time(), s = sid})
+        if ok and f then
+            if bb then bb.BackgroundTransparency = 0.35 end
+            pending[#pending + 1] = {f = f, b = bb, txt = txt, t = os.clock()}
+            hintL.Parent = nil
+            scrollBottom()
+        end
+    end
+
+    local function agoText(t)
+        local d = math.max(0, os.time() - (tonumber(t) or os.time()))
+        if d < 60 then return "just now" end
+        if d < 3600 then return math.floor(d / 60) .. "m ago" end
+        if d < 86400 then return math.floor(d / 3600) .. "h ago" end
+        return math.floor(d / 86400) .. "d ago"
+    end
+
+    local function cleanHandle(x)
+        x = trim(tostring(x or ""))
+        x = string.gsub(x, "^@", "")
+        if string.lower(string.sub(x, 1, 4)) == "user" then x = "User" .. string.sub(x, 5) end
+        return x
+    end
+
+    local function setMute(who, on)
+        who = cleanHandle(who)
+        if who == "" or not string.match(who, "^[%w_]+$") then status("Usage: /mute User1234", false); return end
+        if who == handle then status("You can't mute yourself.", false); return end
+        if who == "Owner" or who == "Admin" then status("You can't mute the Owner or Admin.", false); return end
+        if on then
+            mutes[who] = {t = os.time()}
+            task.spawn(function() call("PUT", "/mutes/" .. who .. ".json", {t = os.time()}) end)
+            if H.toast then pcall(H.toast, "User Muted", who .. " can no longer talk in Hub Chat.", 4) end
+        else
+            mutes[who] = nil
+            task.spawn(function() call("DELETE", "/mutes/" .. who .. ".json") end)
+            if H.toast then pcall(H.toast, "User Unmuted", who .. " can talk in Hub Chat again.", 4) end
+        end
+        if refreshMuted then refreshMuted() end
+    end
+
+    refreshMuted = function()
+        if not mutedList then return end
+        local names = {}
+        for k in pairs(mutes) do names[#names + 1] = k end
+        table.sort(names)
+        if muteCount then muteCount.Text = "Muted (" .. #names .. ")" end
+        if not mutedPanel.Visible then return end
+        for _, c in ipairs(mutedList:GetChildren()) do
+            if c:IsA("Frame") or c:IsA("TextLabel") then c:Destroy() end
+        end
+        if #names == 0 then
+            local e = Instance.new("TextLabel")
+            e.Size = UDim2.new(1, 0, 0, 200)
+            e.BackgroundTransparency = 1
+            e.Text = "Nobody is muted.\nUse /mute User1234 in the chat box."
+            e.TextSize = 13
+            e.Font = Enum.Font.Gotham
+            e.TextColor3 = Theme.Dim
+            e.Parent = mutedList
+            return
+        end
+        for i, who in ipairs(names) do
+            local r = Instance.new("Frame")
+            r.Size = UDim2.new(1, -4, 0, 40)
+            r.LayoutOrder = i
+            r.BorderSizePixel = 0
+            r.BackgroundColor3 = Theme.Control
+            r.Parent = mutedList
+            roundify(r, 8)
+            local av = Instance.new("TextLabel")
+            av.Size = UDim2.fromOffset(28, 28)
+            av.Position = UDim2.fromOffset(8, 6)
+            av.BorderSizePixel = 0
+            av.BackgroundColor3 = Theme.Hover
+            av.Text = string.upper(string.sub(who, 1, 1))
+            av.TextSize = 13
+            av.Font = Enum.Font.GothamBold
+            av.TextColor3 = Theme.Text
+            av.Parent = r
+            roundify(av, 14)
+            local nl = Instance.new("TextLabel")
+            nl.Size = UDim2.new(1, -140, 0, 16)
+            nl.Position = UDim2.fromOffset(44, 5)
+            nl.BackgroundTransparency = 1
+            nl.Text = who
+            nl.TextSize = 13
+            nl.Font = Enum.Font.GothamBold
+            nl.TextXAlignment = Enum.TextXAlignment.Left
+            nl.TextColor3 = Theme.Text
+            nl.Parent = r
+            local tl = Instance.new("TextLabel")
+            tl.Size = UDim2.new(1, -140, 0, 14)
+            tl.Position = UDim2.fromOffset(44, 21)
+            tl.BackgroundTransparency = 1
+            tl.Text = "muted " .. agoText(type(mutes[who]) == "table" and mutes[who].t)
+            tl.TextSize = 11
+            tl.Font = Enum.Font.Gotham
+            tl.TextXAlignment = Enum.TextXAlignment.Left
+            tl.TextColor3 = Theme.Dim
+            tl.Parent = r
+            local ub = Instance.new("TextButton")
+            ub.Size = UDim2.fromOffset(78, 26)
+            ub.AnchorPoint = Vector2.new(1, 0.5)
+            ub.Position = UDim2.new(1, -8, 0.5, 0)
+            ub.BorderSizePixel = 0
+            ub.Text = "Unmute"
+            ub.TextSize = 12
+            ub.Font = Enum.Font.GothamBold
+            ub.AutoButtonColor = false
+            ub.BackgroundColor3 = Theme.Accent
+            ub.TextColor3 = DARK
+            ub.Parent = r
+            roundify(ub, 7)
+            ub.Activated:Connect(function() setMute(who, false) end)
+        end
+    end
+
+    local function runCommand(txt)
+        local cmd, rest = string.match(txt, "^/(%S+)%s*(.-)%s*$")
+        cmd = string.lower(cmd or "")
+        if cmd == "mute" then
+            setMute(rest, true)
+        elseif cmd == "unmute" then
+            setMute(rest, false)
+        elseif cmd == "clear" then
+            task.spawn(function() call("DELETE", "/chat.json") end)
+            if H.toast then pcall(H.toast, "Chat Cleared", "Hub Chat history was wiped.", 4) end
+        elseif cmd == "announce" then
+            if rest == "" then status("Usage: /announce your message", false); return end
+            task.spawn(function() call("PUT", "/announce.json", {m = string.sub(rest, 1, 160), t = os.time(), by = handle}) end)
+            if H.toast then pcall(H.toast, "Announcement Sent", rest, 4) end
+        elseif cmd == "muted" then
+            if mutedPanel and not mutedPanel.Visible then
+                mutedPanel.Visible = true
+                feed.Visible = false
+                refreshMuted()
+            end
+        else
+            if H.toast then
+                pcall(H.toast, "Moderator Commands", "/mute name  /unmute name  /muted  /clear  /announce message", 8)
+            end
+        end
+    end
+
+    local lastAnnounce = nil
+
+    task.spawn(function()
+        local lastFetch = 0
+        while running do
+            local viewing = H.guiOpenNow and box.Visible and feed.Visible and currentPage == "User Chat"
+            local gap = viewing and 0.7 or 3
+            if base() and (H.chatWake or os.clock() - lastFetch >= gap) then
+                H.chatWake = false
+                lastFetch = os.clock()
+                pcall(function()
+                    local raw = call("GET", "/chat.json?orderBy=%22%24key%22&limitToLast=40")
+                    local chat = decode(raw)
+                    if type(chat) == "table" then render(chat)
+                    elseif raw == "null" then render({}) end
+                end)
+                for i = #pending, 1, -1 do
+                    if os.clock() - pending[i].t > 10 then
+                        pcall(function() pending[i].f:Destroy() end)
+                        table.remove(pending, i)
+                    end
+                end
+            end
+            task.wait(0.1)
+        end
+    end)
     local lastSend = 0
     local function doSend()
         local txt = trim(input.Text)
         if txt == "" then return end
         if #txt > 200 then txt = string.sub(txt, 1, 200) end
         if not base() then status("Chat server not reachable right now.", false); return end
+        if isMod and string.sub(txt, 1, 1) == "/" then
+            input.Text = ""
+            runCommand(txt)
+            return
+        end
+        if mutes[handle] then
+            status("You are muted in Hub Chat.", false)
+            return
+        end
         if os.clock() - lastSend < 1.2 then return end
         lastSend = os.clock()
         input.Text = ""
+        echo(txt)
         task.spawn(function()
             call("POST", "/chat.json", {n = handle, m = txt, t = os.time(), s = sid})
+            H.chatWake = true
         end)
     end
     sendBtn.Activated:Connect(doSend)
@@ -7664,8 +8095,22 @@ end)
                     if H.setOnline then pcall(H.setOnline, n) end
                 end)
                 task.spawn(function()
-                    local chat = decode(call("GET", "/chat.json?orderBy=%22%24key%22&limitToLast=40"))
-                    if type(chat) == "table" then render(chat) end
+                    local raw = call("GET", "/mutes.json")
+                    local mt = decode(raw)
+                    if type(mt) == "table" or raw == "null" then
+                        local fresh = {}
+                        for k, v in pairs(type(mt) == "table" and mt or {}) do fresh[k] = v end
+                        mutes = fresh
+                        if refreshMuted then pcall(refreshMuted) end
+                        if mutes[handle] then status("You are muted in Hub Chat.", false) end
+                    end
+                end)
+                task.spawn(function()
+                    local an = decode(call("GET", "/announce.json"))
+                    if type(an) == "table" and type(an.t) == "number" and an.t >= joinTime and an.t ~= lastAnnounce then
+                        lastAnnounce = an.t
+                        if H.toast then pcall(H.toast, (an.by == "Admin" and "Admin" or "Owner") .. " Announcement", tostring(an.m or ""), 10) end
+                    end
                 end)
                 task.wait(3)
             end
@@ -7687,7 +8132,7 @@ end)
     local CANVAS_H = 200
     local HI_FILE = "StrawberryHub/dino_hi.txt"
 
-    H.panelHead(panel, "rbxassetid://10723395215", "Dino Run", "Space / W / Up to jump  |  S / Down to duck  |  click to jump")
+    H.panelHead(panel, "rbxassetid://10723395215", "Dino Run", "")
 
     local canvas = Instance.new("Frame")
     canvas.Name = "DinoCanvas"
@@ -7823,16 +8268,32 @@ end)
     local duckB = sprite(dino, join(DUCK, DLEGS_B), true)
     runB.Visible, duckA.Visible, duckB.Visible = false, false, false
 
-    local CACTUS_S = {
-        "...##...", "..####..", "..####..", "#.####..", "#.####.#", "#.####.#", "######.#", "..######",
-        "..####..", "..####..", "..####..", "..####..", "..####..", "..####..", "..####..",
-    }
-    local CACTUS_L = {
-        "....####....", "...######...", "...######...", "...######.##", "##.######.##", "##.######.##",
-        "##.######.##", "##.######.##", "##.########.", "##.######...", "#########...", ".########...",
-        "...######...", "...######...", "...######...", "...######...", "...######...", "...######...",
-        "...######...", "...######...", "...######...", "...######...", "...######...", "...######...",
-    }
+    local function rect(parent, x, y, w, h)
+        local r = Instance.new("Frame")
+        r.Position = UDim2.fromOffset(x, y)
+        r.Size = UDim2.fromOffset(w, h)
+        r.BorderSizePixel = 0
+        r.BackgroundColor3 = Theme.Text
+        r.Parent = parent
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(0, math.max(1, math.floor(math.min(w, h) / 2)))
+        c.Parent = r
+        return r
+    end
+    local function cactus(parent, big)
+        local k = big and 1.5 or 1
+        local f = Instance.new("Frame")
+        f.BackgroundTransparency = 1
+        f.Size = UDim2.fromOffset(math.floor(16 * k), math.floor(32 * k))
+        f.Parent = parent
+        rect(f, math.floor(5 * k), 0, math.floor(6 * k), math.floor(32 * k))
+        rect(f, 0, math.floor(8 * k), math.floor(4 * k), math.floor(11 * k))
+        rect(f, 0, math.floor(16 * k), math.floor(7 * k), math.floor(4 * k))
+        rect(f, math.floor(12 * k), math.floor(5 * k), math.floor(4 * k), math.floor(11 * k))
+        rect(f, math.floor(9 * k), math.floor(13 * k), math.floor(7 * k), math.floor(4 * k))
+        return f, math.floor(16 * k), math.floor(32 * k)
+    end
+
     local BIRD_UP = {
         ".......#..............", ".......##.............", ".......###............", ".......####...........",
         "...#...#####..........", "..##...######.........", ".####..#######........", "######################",
@@ -7876,21 +8337,28 @@ end)
         if isfile(HI_FILE) then hi = tonumber(readfile(HI_FILE)) or 0 end
     end)
 
-    local function canvasW()
-        local sc = 1
-        pcall(function() sc = math.max(uiScale.Scale, 0.05) end)
+    local cachedW = 526
+    local function measure()
+        local sc = math.max(uiScale.Scale, 0.05)
         local w = canvas.AbsoluteSize.X / sc
-        if not w or w < 100 then w = 526 end
-        return w
+        if w and w >= 100 then cachedW = w end
     end
+    canvas:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() pcall(measure) end)
+    pcall(measure)
+    local function canvasW() return cachedW end
 
-    local function drawScore()
-        scoreL.Text = string.format("HI %05d   %05d", math.floor(hi), math.floor(score))
+    local lastShown = -1
+    local function drawScore(force)
+        local sNow = math.floor(score)
+        if not force and sNow == lastShown then return end
+        lastShown = sNow
+        scoreL.Text = string.format("HI %05d   %05d", math.floor(hi), sNow)
     end
     drawScore()
 
+    local recycle
     local function clearObstacles()
-        for _, o in ipairs(obstacles) do pcall(function() o.f:Destroy() end) end
+        for _, o in ipairs(obstacles) do pcall(recycle, o) end
         obstacles = {}
     end
 
@@ -7913,47 +8381,80 @@ end)
             hi = math.floor(score)
             pcall(function() writefile(HI_FILE, tostring(math.floor(hi))) end)
         end
-        drawScore()
+        drawScore(true)
+    end
+
+    local pool = {}
+    local function take(key, build)
+        local list = pool[key]
+        if list and #list > 0 then
+            local o = table.remove(list)
+            o.f.Visible = true
+            return o
+        end
+        local o = build()
+        o.key = key
+        return o
+    end
+    recycle = function(o)
+        o.f.Visible = false
+        pool[o.key] = pool[o.key] or {}
+        table.insert(pool[o.key], o)
+    end
+
+    local function buildBird()
+        local f = Instance.new("Frame")
+        f.BackgroundTransparency = 1
+        f.Size = UDim2.fromOffset(44, 34)
+        f.Parent = world
+        local up = sprite(f, BIRD_UP, false)
+        local dn = sprite(f, BIRD_DOWN, false)
+        dn.Position = UDim2.fromOffset(0, 8)
+        dn.Visible = false
+        return {f = f, up = up, dn = dn, bird = true, w = 44, hb = {2, 8, 40, 14}}
+    end
+    local function buildCacti(n, big)
+        return function()
+            local f = Instance.new("Frame")
+            f.BackgroundTransparency = 1
+            f.Parent = world
+            local x, hh = 0, 0
+            for _ = 1, n do
+                local c, cw, ch = cactus(f, big)
+                c.Position = UDim2.fromOffset(x, 0)
+                x = x + cw + 3
+                hh = ch
+            end
+            f.Size = UDim2.fromOffset(x - 3, hh)
+            return {f = f, bird = false, w = x - 3, h = hh, hb = {3, 3, x - 9, hh - 4}}
+        end
     end
 
     local function spawn()
         local W = canvasW()
-        local o = {x = W + 20, bird = false}
+        local o
         if score > 250 and math.random() < 0.3 then
-            local f = Instance.new("Frame")
-            f.BackgroundTransparency = 1
-            f.Size = UDim2.fromOffset(44, 34)
-            f.Parent = world
-            local up = sprite(f, BIRD_UP, false)
-            local dn = sprite(f, BIRD_DOWN, false)
-            dn.Position = UDim2.fromOffset(0, 8)
-            dn.Visible = false
+            o = take("bird", buildBird)
             local lvl = math.random(1, 3)
             o.y = (lvl == 1) and (GROUND - 26) or ((lvl == 2) and (GROUND - 50) or (GROUND - 82))
-            o.f, o.up, o.dn, o.bird = f, up, dn, true
-            o.hb = {2, 8, 40, 14}
-            o.w = 44
         else
-            local f = Instance.new("Frame")
-            f.BackgroundTransparency = 1
-            f.Parent = world
             local n = math.random(1, (score > 150) and 3 or 2)
             local big = math.random() < 0.45
-            local rows = big and CACTUS_L or CACTUS_S
-            local x, hh = 0, 0
-            for _ = 1, n do
-                local c, cw, ch = sprite(f, rows, false)
-                c.Position = UDim2.fromOffset(x, 0)
-                x = x + cw + 2
-                hh = ch
-            end
-            f.Size = UDim2.fromOffset(x - 2, hh)
-            o.f, o.y, o.w = f, GROUND - hh + 2, x - 2
-            o.hb = {3, 3, x - 8, hh - 4}
+            o = take((big and "L" or "S") .. n, buildCacti(n, big))
+            o.y = GROUND - o.h + 2
         end
-        o.f.Position = UDim2.fromOffset(o.x, o.y)
+        o.x = W + 20
+        o.f.Position = UDim2.fromOffset(math.floor(o.x + 0.5), o.y)
         obstacles[#obstacles + 1] = o
     end
+
+    task.defer(function()
+        for _, key in ipairs({"S1", "S2", "L1", "L2"}) do
+            local n = tonumber(string.sub(key, 2))
+            pcall(function() recycle(take(key, buildCacti(n, string.sub(key, 1, 1) == "L"))) end)
+        end
+        pcall(function() recycle(take("bird", buildBird)) end)
+    end)
 
     local function onAction(_, st, obj)
         local kc = obj and obj.KeyCode
@@ -7994,10 +8495,12 @@ end)
         return ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah
     end
 
-    connect(RunService.Heartbeat, function(dt)
-        local focused = false
-        pcall(function() focused = UIS:GetFocusedTextBox() ~= nil end)
-        local active = running and H.dinoVisible and H.guiOpenNow and panel.Visible and not focused
+    connect(RunService.RenderStepped, function(dt)
+        if not (H.dinoVisible and H.guiOpenNow) then
+            if bound then setBound(false) end
+            return
+        end
+        local active = running and panel.Visible and UIS:GetFocusedTextBox() == nil
         setBound(active and true or false)
         if not active then return end
         dt = math.min(dt, 1 / 20)
@@ -8028,13 +8531,17 @@ end)
         animT = animT + dt
         if animT > 0.09 then animT = 0; legFlip = not legFlip end
         local onGround = h <= 0
-        runA.Visible = not ducking and (legFlip or not onGround)
-        runB.Visible = not ducking and not legFlip and onGround
-        duckA.Visible = ducking and legFlip
-        duckB.Visible = ducking and not legFlip
+        local vA = not ducking and (legFlip or not onGround)
+        local vB = not ducking and not legFlip and onGround
+        local vC = ducking and legFlip
+        local vD = ducking and not legFlip
+        if runA.Visible ~= vA then runA.Visible = vA end
+        if runB.Visible ~= vB then runB.Visible = vB end
+        if duckA.Visible ~= vC then duckA.Visible = vC end
+        if duckB.Visible ~= vD then duckB.Visible = vD end
         local dh = ducking and DUCK_H or STAND_H
         local dTop = GROUND + 2 - dh - h
-        dino.Position = UDim2.fromOffset(36, dTop)
+        dino.Position = UDim2.fromOffset(36, math.floor(dTop + 0.5))
 
         local hx, hy, hw, hh2
         if ducking then hx, hy, hw, hh2 = 36 + 4, dTop + 4, 52, dh - 8 else hx, hy, hw, hh2 = 36 + 6, dTop + 2, 26, dh - 6 end
@@ -8048,17 +8555,19 @@ end)
         local keep = {}
         for _, o in ipairs(obstacles) do
             o.x = o.x - (speed + (o.bird and 40 or 0)) * dt
-            o.f.Position = UDim2.fromOffset(o.x, o.y)
+            o.f.Position = UDim2.fromOffset(math.floor(o.x + 0.5), o.y)
             if o.bird then
                 local flap = math.floor(os.clock() * 6) % 2 == 0
-                o.up.Visible = flap
-                o.dn.Visible = not flap
+                if o.up.Visible ~= flap then
+                    o.up.Visible = flap
+                    o.dn.Visible = not flap
+                end
             end
             if overlap(hx, hy, hw, hh2, o.x + o.hb[1], o.y + o.hb[2], o.hb[3], o.hb[4]) then
                 gameOver()
             end
             if o.x < -90 then
-                pcall(function() o.f:Destroy() end)
+                recycle(o)
             else
                 keep[#keep + 1] = o
             end
@@ -8068,12 +8577,12 @@ end)
         for _, c in ipairs(clouds) do
             c.x = c.x - speed * 0.12 * dt
             if c.x < -50 then c.x = W + math.random(10, 120); c.y = math.random(14, 70) end
-            c.f.Position = UDim2.fromOffset(c.x, c.y)
+            c.f.Position = UDim2.fromOffset(math.floor(c.x + 0.5), c.y)
         end
         for _, p in ipairs(pebbles) do
             p.x = p.x - speed * dt
             if p.x < -6 then p.x = W + math.random(0, 60); p.y = GROUND + math.random(5, 20) end
-            p.f.Position = UDim2.fromOffset(p.x, p.y)
+            p.f.Position = UDim2.fromOffset(math.floor(p.x + 0.5), p.y)
         end
     end)
 end)
@@ -8561,7 +9070,7 @@ end)
     badge.BorderSizePixel = 0
     badge.Font = Enum.Font.GothamBold
     badge.TextSize = 12
-    badge.Text = isOwner and "  OWNER  " or "  FREE USER  "
+    badge.Text = isOwner and "  OWNER  " or (H.isAdmin and "  ADMIN  " or "  FREE USER  ")
     badge.Parent = tagRow
     do
         local corner = Instance.new("UICorner")
@@ -8571,13 +9080,17 @@ end)
     if isOwner then
         badge.BackgroundColor3 = GOLD
         badge.TextColor3 = Color3.fromRGB(35, 25, 0)
+    elseif H.isAdmin then
+        badge.BackgroundColor3 = Color3.fromRGB(90, 170, 255)
+        badge.TextColor3 = Color3.fromRGB(5, 20, 40)
     else
         skin(badge, "BackgroundColor3", "Control")
         skin(badge, "TextColor3", "Text")
         addStroke(badge, "Border", 1)
     end
     if H.rankL then
-        H.rankL.Text = isOwner and "Rank: Owner" or "Rank: Free User"
+        H.rankL.Text = isOwner and "Rank: Owner" or (H.isAdmin and "Rank: Admin" or "Rank: Free User")
+        if H.isAdmin and not isOwner then H.rankL.TextColor3 = Color3.fromRGB(90, 170, 255) end
         if isOwner then H.rankL.TextColor3 = GOLD end
     end
 
@@ -9049,12 +9562,14 @@ end)
                 if tg.kind == "attr" then
                     local v = tg.holder:GetAttribute(tg.name)
                     if type(v) == "number" then
-                        local m = maxFor(tg.holder:GetFullName() .. "@" .. tg.name, v, tg.max or findMax(tg.holder, tg.name, "attr"))
+                        tg.fk = tg.fk or (tg.holder:GetFullName() .. "@" .. tg.name)
+                    local m = maxFor(tg.fk, v, tg.max or findMax(tg.holder, tg.name, "attr"))
                         if v < m then tg.holder:SetAttribute(tg.name, m) end
                     end
                 else
                     local v = tg.holder.Value
-                    local m = maxFor(tg.holder:GetFullName(), v, tg.max)
+                    tg.fk = tg.fk or tg.holder:GetFullName()
+                    local m = maxFor(tg.fk, v, tg.max)
                     if v < m then tg.holder.Value = m end
                 end
             end)
@@ -9200,8 +9715,8 @@ end)
                     end
                 else
                     if hiddenText[t] == nil then hiddenText[t] = {t.TextTransparency, t.TextStrokeTransparency} end
-                    t.TextTransparency = 1
-                    t.TextStrokeTransparency = 1
+                    if t.TextTransparency ~= 1 then t.TextTransparency = 1 end
+                    if t.TextStrokeTransparency ~= 1 then t.TextStrokeTransparency = 1 end
                 end
             end)
         end
@@ -11439,6 +11954,13 @@ end)
     local need, needFound = "None", false
     task.spawn(function()
         while running do
+            local questNeeded = S.eatTrees or S.eatMeatOn or S.autoDrink or S.autoRest
+            if not questNeeded then
+                need = "None"
+                H.currentNeed = "None"
+                status(H.needL, "Game asks: -")
+                task.wait(1)
+            else
             pcall(function()
                 local qf = nil
                 local gameUi = playerGui:FindFirstChild("GameUI")
@@ -11465,6 +11987,7 @@ end)
                 end
             end)
             task.wait(0.2)
+            end
         end
     end)
 
