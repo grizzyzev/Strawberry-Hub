@@ -16,7 +16,7 @@ local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local genv = (getgenv and getgenv()) or _G
 
-local VERSION = "v1.26.8"
+local VERSION = "v1.27.0"
 
 for _, env in ipairs({genv, _G}) do
     local old = env.StrawberryUnload
@@ -5785,9 +5785,10 @@ end)
     big.TextSize = 24
     big.TextYAlignment = Enum.TextYAlignment.Center
     big.Font = Enum.Font.Code
-    local gainL = createLabel(box, "Gained this session: +0", 16, true)
+    local gainL = createLabel(box, "Made this run: +0", 16, true)
+    local runStart = os.clock()   -- the run = since you injected in this server
     local rateL = createLabel(box, "Per hour: -", 16, true)
-    local avgL = createLabel(box, "Session average: -", 16)
+    local avgL = createLabel(box, "Run average: -", 16)
     local lastL = createLabel(box, "Last gain: -", 16)
     local srcL = createLabel(box, "Source: -", 30)
 
@@ -5994,9 +5995,15 @@ end)
 
     local function refreshRates()
         local now = os.clock()
-        gainL.Text = "Gained this session: +" .. (gainedApprox and "~" or "") .. commas(gained)
+        local runSec = math.floor(now - runStart)
+        local runTime = runSec >= 3600 and string.format("%dh %02dm", math.floor(runSec / 3600), math.floor((runSec % 3600) / 60))
+            or string.format("%dm %02ds", math.floor(runSec / 60), runSec % 60)
+        gainL.Text = "Made this run: +" .. (gainedApprox and "~" or "") .. commas(gained) .. "  in " .. runTime
         H.fossilGained = gained
         H.fossilGainedTxt = "+" .. (gainedApprox and "~" or "") .. commas(gained)
+        H.fossilRunTime = runTime
+        local runHrs = (now - runStart) / 3600
+        H.fossilRunAvg = (runHrs > 0.01 and gained > 0) and (commas(gained / runHrs) .. " / hour") or "-"
         while gains[1] and now - gains[1].t > WINDOW do table.remove(gains, 1) end
         local recent = 0
         for _, g in ipairs(gains) do recent = recent + g.a end
@@ -6011,8 +6018,7 @@ end)
             rateL.Text = "Per hour: 0 (no gains in the last 10 min)"
             H.fossilRateTxt = "0 / hour"
         end
-        local hrs = firstT and (now - firstT) / 3600 or 0
-        avgL.Text = "Session average: " .. ((hrs > 0.01 and gained > 0) and (commas(gained / hrs) .. "/h") or "-")
+        avgL.Text = "Run average: " .. tostring(H.fossilRunAvg)
         lastL.Text = lastGainT and string.format("Last gain: +%s (%s)", commas(lastGainAmt), fmtAgo(now - lastGainT)) or "Last gain: -"
     end
 
@@ -6204,6 +6210,263 @@ end)
     end)
 end)
 
+
+----------------------------------------------------------------------
+-- HUB CHAT + ONLINE USERS  (Main tab)
+-- A shared chat for everyone running Strawberry Hub, with names hidden.
+-- It needs a tiny free backend: a Firebase Realtime Database. Make one at
+-- https://console.firebase.google.com (free), set its rules to {"rules":{".read":true,".write":true}},
+-- then paste its URL (looks like https://yourname-default-rtdb.firebaseio.com) below,
+-- so every copy of the script talks to the same place.
+----------------------------------------------------------------------
+;safeRun(function()
+    local DEFAULT_SERVER = ""   -- <<< OWNER: paste your Firebase Realtime Database URL here
+
+    local server = trim(DEFAULT_SERVER)
+    local isOwner = player.UserId == H.OWNER_ID
+
+    -- a hidden handle, so real usernames never show in chat
+    math.randomseed(os.clock() * 1e6 + player.UserId % 100000)
+    local sid = tostring(math.random(100000, 999999)) .. tostring(os.time() % 100000)
+    local tag = tostring(1000 + (player.UserId % 9000))
+    local handle = isOwner and "\u{1F451} Owner" or ("\u{1F353} User" .. tag)
+
+    local function req() : any
+        local g: any = (getgenv and getgenv()) or _G
+        local syn = rawget(g, "syn")
+        local http = rawget(g, "http")
+        return (type(syn) == "table" and syn.request) or (type(http) == "table" and http.request)
+            or rawget(g, "http_request") or rawget(g, "request")
+    end
+    local function base()
+        local u = trim(server)
+        if u == "" then return nil end
+        if string.sub(u, 1, 8) ~= "https://" then return nil end
+        u = string.gsub(u, "/+$", "")
+        return u
+    end
+    local function call(method, path, body)
+        local b = base()
+        if not b then return nil end
+        local fn = req()
+        if type(fn) ~= "function" then return nil end
+        local opt: any = {Url = b .. path, Method = method}
+        if body ~= nil then
+            opt.Headers = {["Content-Type"] = "application/json"}
+            opt.Body = HttpService:JSONEncode(body)
+        end
+        local ok, res = pcall(fn, opt)
+        if not ok or type(res) ~= "table" then return nil end
+        return res.Body or res.body or ""
+    end
+    local function decode(txt)
+        if type(txt) ~= "string" or txt == "" or txt == "null" then return nil end
+        local ok, v = pcall(function() return HttpService:JSONDecode(txt) end)
+        return ok and v or nil
+    end
+    local function esc(t)
+        t = string.gsub(t, "&", "&amp;")
+        t = string.gsub(t, "<", "&lt;")
+        t = string.gsub(t, ">", "&gt;")
+        return t
+    end
+
+    local box = createGroupbox(Pages.Main.Left, "Hub Chat")
+    local onlineL = createLabel(box, "Users online: ...", 16, true)
+
+    local feed = Instance.new("ScrollingFrame")
+    feed.Size = UDim2.new(1, 0, 0, 150)
+    feed.BackgroundTransparency = 0.25
+    feed.BorderSizePixel = 0
+    feed.ScrollBarThickness = 4
+    feed.CanvasSize = UDim2.new(0, 0, 0, 0)
+    feed.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    feed.ScrollingDirection = Enum.ScrollingDirection.Y
+    feed.Parent = box
+    setOrder(feed, box)
+    skin(feed, "BackgroundColor3", "Control")
+    skin(feed, "ScrollBarImageColor3", "Accent")
+    addStroke(feed, "Border", 1)
+    local feedPad = Instance.new("UIPadding")
+    feedPad.PaddingLeft = UDim.new(0, 6); feedPad.PaddingRight = UDim.new(0, 6)
+    feedPad.PaddingTop = UDim.new(0, 5); feedPad.PaddingBottom = UDim.new(0, 5)
+    feedPad.Parent = feed
+    local feedLayout = Instance.new("UIListLayout")
+    feedLayout.Padding = UDim.new(0, 4)
+    feedLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    feedLayout.Parent = feed
+
+    local hintL = createLabel(feed, "Loading chat...", 16)
+    hintL.RichText = true
+
+    -- input row: a box to type + a Send button
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, 0, 0, 24)
+    row.BackgroundTransparency = 1
+    row.Parent = box
+    setOrder(row, box)
+    local input = Instance.new("TextBox")
+    input.Size = UDim2.new(1, -66, 1, 0)
+    input.BorderSizePixel = 0
+    input.Text = ""
+    input.PlaceholderText = "Message... (hidden as " .. handle .. ")"
+    input.TextSize = 13
+    input.Font = FONT
+    input.TextXAlignment = Enum.TextXAlignment.Left
+    input.ClearTextOnFocus = false
+    input.ClipsDescendants = true
+    input.TextTruncate = Enum.TextTruncate.AtEnd
+    input.Parent = row
+    skin(input, "BackgroundColor3", "Control")
+    skin(input, "TextColor3", "Text")
+    skin(input, "PlaceholderColor3", "Dim")
+    addStroke(input, "Black", 1)
+    local inPad = Instance.new("UIPadding")
+    inPad.PaddingLeft = UDim.new(0, 5); inPad.PaddingRight = UDim.new(0, 5)
+    inPad.Parent = input
+    local sendBtn = Instance.new("TextButton")
+    sendBtn.Size = UDim2.new(0, 60, 1, 0)
+    sendBtn.Position = UDim2.new(1, -60, 0, 0)
+    sendBtn.BorderSizePixel = 0
+    sendBtn.Text = "Send"
+    sendBtn.TextSize = 13
+    sendBtn.Font = FONT
+    sendBtn.AutoButtonColor = true
+    sendBtn.Parent = row
+    skin(sendBtn, "BackgroundColor3", "Accent")
+    sendBtn.TextColor3 = Color3.fromRGB(20, 10, 14)
+    addStroke(sendBtn, "Black", 1)
+
+    local setup = createButton(box, "Set Chat Server URL")
+    local statusL = createLabel(box, "", 16)
+    statusL.RichText = true
+
+    local function status(t, good)
+        statusL.Text = t
+        statusL.TextColor3 = good and Color3.fromRGB(120, 230, 150) or Theme.Dim
+    end
+
+    -- rebuild the message list from decoded chat data
+    local function render(data)
+        for _, c in ipairs(feed:GetChildren()) do
+            if c:IsA("TextLabel") then c:Destroy() end
+        end
+        local keys = {}
+        for k in pairs(data) do keys[#keys + 1] = k end
+        table.sort(keys)
+        local shown = 0
+        for _, k in ipairs(keys) do
+            local m = data[k]
+            if type(m) == "table" and m.m then
+                shown = shown + 1
+                local who = tostring(m.n or "User")
+                local col = (who == "\u{1F451} Owner") and "#ffd23f" or "#ff6b85"
+                local lbl = Instance.new("TextLabel")
+                lbl.Size = UDim2.new(1, 0, 0, 0)
+                lbl.AutomaticSize = Enum.AutomaticSize.Y
+                lbl.BackgroundTransparency = 1
+                lbl.RichText = true
+                lbl.TextWrapped = true
+                lbl.TextSize = 13
+                lbl.Font = FONT
+                lbl.TextXAlignment = Enum.TextXAlignment.Left
+                lbl.Text = "<font color=\"" .. col .. "\">" .. esc(who) .. "</font>  " .. esc(tostring(m.m))
+                lbl.Parent = feed
+                skin(lbl, "TextColor3", "Text")
+                setOrder(lbl, feed)
+            end
+        end
+        if shown == 0 then
+            hintL.Text = "No messages yet. Say hi!"
+            hintL.Parent = feed
+        end
+        task.defer(function()
+            pcall(function()
+                feed.CanvasPosition = Vector2.new(0, math.max(0, feedLayout.AbsoluteContentSize.Y))
+            end)
+        end)
+    end
+
+    local lastSend = 0
+    local function doSend()
+        local txt = trim(input.Text)
+        if txt == "" then return end
+        if #txt > 200 then txt = string.sub(txt, 1, 200) end
+        if not base() then status("Set a chat server URL first (the button below).", false); return end
+        if os.clock() - lastSend < 1.2 then return end
+        lastSend = os.clock()
+        input.Text = ""
+        task.spawn(function()
+            call("POST", "/chat.json", {n = handle, m = txt, t = os.time()})
+        end)
+    end
+    sendBtn.Activated:Connect(doSend)
+    input.FocusLost:Connect(function(enter) if enter then doSend() end end)
+
+    setup.Activated:Connect(function()
+        local old = setup.Text
+        setup.Text = "Paste the URL below, then click again"
+        input.PlaceholderText = "Paste Firebase URL here, then press Send"
+        local tmp
+        tmp = input.FocusLost:Connect(function(enter)
+            local v = trim(input.Text)
+            if string.sub(v, 1, 8) == "https://" then
+                server = v
+                input.Text = ""
+                input.PlaceholderText = "Message... (hidden as " .. handle .. ")"
+                status("Chat server set!", true)
+                tmp:Disconnect()
+                setup.Text = old
+            end
+        end)
+        task.delay(20, function() setup.Text = old end)
+    end)
+
+    -- presence: tell the server we are online every 15s
+    task.spawn(function()
+        while running do
+            if base() then
+                task.spawn(function() call("PUT", "/presence/" .. sid .. ".json", {t = os.time(), o = isOwner and 1 or 0}) end)
+            end
+            task.wait(15)
+        end
+        pcall(function() call("DELETE", "/presence/" .. sid .. ".json") end)
+    end)
+
+    -- refresh: online count + chat, every 3s
+    task.spawn(function()
+        while running do
+            if not base() then
+                onlineL.Text = "Users online: set a chat server to enable"
+                hintL.Text = "Chat is off. Click \"Set Chat Server URL\" below to turn it on."
+                task.wait(2)
+            else
+                task.spawn(function()
+                    local pres = decode(call("GET", "/presence.json"))
+                    local n, now = 0, os.time()
+                    if type(pres) == "table" then
+                        for _, e in pairs(pres) do
+                            if type(e) == "table" and type(e.t) == "number" and now - e.t < 45 then n = n + 1 end
+                        end
+                    end
+                    if n < 1 then n = 1 end
+                    onlineL.Text = "Users online: " .. n
+                    H.hubOnline = n
+                end)
+                task.spawn(function()
+                    local chat = decode(call("GET", "/chat.json?orderBy=%22%24key%22&limitToLast=40"))
+                    if type(chat) == "table" then render(chat) end
+                end)
+                task.wait(3)
+            end
+        end
+    end)
+
+    if server == "" then
+        status("Tip: the owner pastes the Firebase URL once so everyone shares one chat.", false)
+    end
+end)
+
 ----------------------------------------------------------------------
 -- AUTO RESPAWN  (Miscellaneous tab)
 -- when you die it presses the respawn / play button the game shows you
@@ -6388,8 +6651,9 @@ end)
             if H.findMyDino then dino = H.findMyDino() end
             local fields = {
                 {name = "Fossils", value = tostring(H.fossilDisplay or "not found"), inline = true},
-                {name = "Gained this session", value = tostring(H.fossilGainedTxt or "+0"), inline = true},
-                {name = "Making", value = tostring(H.fossilRateTxt or "measuring..."), inline = true},
+                {name = "Made this run", value = tostring(H.fossilGainedTxt or "+0") .. " in " .. tostring(H.fossilRunTime or "0m"), inline = true},
+                {name = "Run average", value = tostring(H.fossilRunAvg or "-"), inline = true},
+                {name = "Making right now", value = tostring(H.fossilRateTxt or "measuring..."), inline = true},
                 {name = "Territories", value = territories(), inline = true},
                 {name = "Dino", value = tostring(dino or "-"), inline = true},
                 {name = "Player", value = S.anon and "hidden" or shownName(), inline = true},
