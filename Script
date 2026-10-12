@@ -27,7 +27,7 @@ local function getGameName()
     return "HUMANS! Primeval Earth | Dinosaur Survival"
 end
 
-local VERSION = "v1.37.2"
+local VERSION = "v1.37.3"
 
 for _, env in ipairs({genv, _G}) do
     local old = env.StrawberryUnload
@@ -51,6 +51,33 @@ local H = anyTbl({})
 
 
 H.OWNER_ID = 2038953612
+H.executorName = function()
+    local name, ver = nil, nil
+    for _, fname in ipairs({"identifyexecutor", "getexecutorname"}) do
+        local fn = rawget(genv, fname)
+        if type(fn) ~= "function" then fn = rawget(_G, fname) end
+        if type(fn) == "function" then
+            local ok, a, b = pcall(fn)
+            if ok and type(a) == "string" and a ~= "" then
+                name = a
+                if type(b) == "string" and b ~= "" then ver = b end
+                break
+            end
+        end
+    end
+    if not name then
+        local checks = {
+            {"syn", "Synapse X"}, {"KRNL_LOADED", "KRNL"}, {"fluxus", "Fluxus"}, {"is_sirhurt_closure", "SirHurt"},
+            {"pebc_execute", "ProtoSmasher"}, {"secure_load", "Sentinel"}, {"Delta", "Delta"},
+        }
+        for _, c in ipairs(checks) do
+            if rawget(genv, c[1]) ~= nil then name = c[2]; break end
+        end
+    end
+    name = name or "Unknown"
+    if ver and not string.find(name, ver, 1, true) then name = name .. " " .. ver end
+    return name
+end
 H.ADMIN_IDS = {[5857103457] = true}
 H.isAdmin = H.ADMIN_IDS[player.UserId] == true
 H.nameOf = function(plr)
@@ -2571,7 +2598,11 @@ do
                 infoLines[7].Text = "Server: " .. (on and "hidden" or string.sub(game.JobId, 1, 8))
             end
         end
-        infoLines[2].Visible = false
+        infoLines[2].Visible = true
+        do
+            local ok, ex = pcall(H.executorName)
+            infoLines[2].Text = "Executor: " .. ((ok and ex) or "Unknown")
+        end
 
 
 
@@ -9061,7 +9092,7 @@ end)
     local tagRow = Instance.new("Frame")
     tagRow.AnchorPoint = Vector2.new(1, 0.5)
     tagRow.Position = UDim2.new(1, -36, 0.5, 1)
-    tagRow.Size = UDim2.fromOffset(240, 18)
+    tagRow.Size = UDim2.fromOffset(420, 18)
     tagRow.BackgroundTransparency = 1
     tagRow.Parent = top
     do
@@ -9072,6 +9103,41 @@ end)
         l.Padding = UDim.new(0, 6)
         l.SortOrder = Enum.SortOrder.LayoutOrder
         l.Parent = tagRow
+    end
+
+    do
+        local ex = Instance.new("Frame")
+        ex.Name = "ExecutorPill"
+        ex.LayoutOrder = 0
+        ex.AutomaticSize = Enum.AutomaticSize.X
+        ex.Size = UDim2.fromOffset(0, 18)
+        ex.BorderSizePixel = 0
+        ex.Parent = tagRow
+        skin(ex, "BackgroundColor3", "Control")
+        addStroke(ex, "Border", 1)
+        roundify(ex, 9)
+        local pd = Instance.new("UIPadding")
+        pd.PaddingLeft = UDim.new(0, 22)
+        pd.PaddingRight = UDim.new(0, 8)
+        pd.Parent = ex
+        local ic = Instance.new("ImageLabel")
+        ic.Size = UDim2.fromOffset(11, 11)
+        ic.AnchorPoint = Vector2.new(0, 0.5)
+        ic.Position = UDim2.new(0, -15, 0.5, 0)
+        ic.BackgroundTransparency = 1
+        ic.Image = "rbxassetid://10734982144"
+        ic.Parent = ex
+        skin(ic, "ImageColor3", "Accent")
+        local t = Instance.new("TextLabel")
+        t.AutomaticSize = Enum.AutomaticSize.X
+        t.Size = UDim2.fromOffset(0, 18)
+        t.BackgroundTransparency = 1
+        local okx, exName = pcall(H.executorName)
+        t.Text = "Executor: " .. ((okx and exName) or "Unknown")
+        t.TextSize = 12
+        t.Font = Enum.Font.GothamBold
+        t.Parent = ex
+        skin(t, "TextColor3", "Text")
     end
 
     local pill = Instance.new("Frame")
