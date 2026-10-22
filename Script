@@ -1,1 +1,42 @@
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
 
+local SCRIPTS = {
+    primeval = "https://api.luarmor.net/files/v4/loaders/b8c171b96c2ad3b3c869ae572cb2ca22.lua",
+    sniper = "https://api.luarmor.net/files/v4/loaders/98096e4869522b965b4e94bde2cf4f42.lua",
+}
+
+local PLACES = {
+    [10696301650] = "primeval",
+    [122446657157717] = "sniper",
+    [90165746516953] = "sniper",
+}
+
+local GAMES = {
+}
+
+local function notify(text)
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "Strawberry Hub",
+            Text = text,
+            Duration = 10,
+        })
+    end)
+end
+
+local which = PLACES[game.PlaceId] or GAMES[game.GameId]
+local url = which and SCRIPTS[which]
+if not url then
+    notify("This game isn't supported yet. Join our Discord: discord.gg/AH8SRWBxQy")
+    return
+end
+
+local ok, err = pcall(function()
+    loadstring(game:HttpGet(url))()
+end)
+if not ok then
+    notify("Couldn't load the script. Try again or ask in our Discord.")
+    warn("[Strawberry Hub] loader error: " .. tostring(err))
+end
