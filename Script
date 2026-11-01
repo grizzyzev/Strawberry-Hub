@@ -7,6 +7,7 @@ local SCRIPTS = {
     sniper = "https://api.luarmor.net/files/v4/loaders/98096e4869522b965b4e94bde2cf4f42.lua",
     bugevolution = "https://api.luarmor.net/files/v4/loaders/386d315125cf7415d381cf735ec39ecc.lua",
     homedefense = "https://api.luarmor.net/files/v4/loaders/f15f02bdaac4ad8e23487f8e3fbae549.lua",
+    jurassic = "https://api.luarmor.net/files/v4/loaders/fbfae5030b450af43a6d5a83ae53aff8.lua",
 }
 
 local NAMES = {
@@ -14,6 +15,7 @@ local NAMES = {
     sniper = "Sniper Arena",
     bugevolution = "Bug Evolution",
     homedefense = "Home Defense",
+    jurassic = "Jurassic Blocky",
 }
 
 local PLACES = {
@@ -22,12 +24,14 @@ local PLACES = {
     [90165746516953] = "sniper",
     [70650894743738] = "bugevolution",
     [105527962898452] = "homedefense",
+    [11653088948] = "jurassic",
 }
 
 local GAMES = {
     [9534705677] = "sniper",
     [10769957062] = "bugevolution",
     [10769857262] = "homedefense",
+    [4130569984] = "jurassic",
 }
 
 -- fallback when a place isn't listed (sub-places, new servers): match the game's name
@@ -36,6 +40,7 @@ local KEYWORDS = {
     {"sniper arena", "sniper"},
     {"bug evolution", "bugevolution"},
     {"home defense", "homedefense"},
+    {"jurassic blocky", "jurassic"},
 }
 
 local DISCORD = "discord.gg/AH8SRWBxQy"
