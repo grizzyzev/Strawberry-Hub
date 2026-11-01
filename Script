@@ -2,11 +2,9 @@ if not game:IsLoaded() then
     game.Loaded:Wait()
 end
 
--- one script for Sniper Arena, Bug Evolution, Home Defense and Jurassic Blocky (it picks the game itself)
+-- one script for every game (Primeval Earth Free, Sniper Arena, Bug Evolution, Home Defense, Jurassic Blocky);
+-- it works out which game you're in by itself
 local ALL_GAMES = "https://api.luarmor.net/files/v4/loaders/bc835159425cc6f0567a7508c803c963.lua"
--- Primeval Earth (Free) is still its own script
-local PRIMEVAL = "https://api.luarmor.net/files/v4/loaders/b8c171b96c2ad3b3c869ae572cb2ca22.lua"
-local PRIMEVAL_PLACE = 10696301650
 
 local DISCORD = "discord.gg/AH8SRWBxQy"
 
@@ -18,14 +16,6 @@ local function notify(text, duration)
             Duration = duration or 10,
         })
     end)
-end
-
-local function isPrimeval()
-    if game.PlaceId == PRIMEVAL_PLACE then return true end
-    local ok, info = pcall(function()
-        return game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId)
-    end)
-    return ok and info and string.find(string.lower(tostring(info.Name)), "primeval", 1, true) ~= nil
 end
 
 -- game:HttpGet first, then the executor's request function if that fails
@@ -40,7 +30,7 @@ local function fetch(url)
     return nil, tostring(body)
 end
 
-local url = isPrimeval() and PRIMEVAL or ALL_GAMES
+local url = ALL_GAMES
 
 local src, httpErr = fetch(url)
 if not src then
