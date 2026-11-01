@@ -113,7 +113,13 @@ while not which and tries < 10 do
 end
 local url = which and SCRIPTS[which]
 if not url then
-    notify("This game isn't supported yet. Join our Discord: " .. DISCORD)
+    -- show + copy the ids so a missing place can be added right away
+    local gameName = "?"
+    pcall(function() gameName = game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name end)
+    local info = string.format("PlaceId %d | GameId %d | %s", game.PlaceId, game.GameId, gameName)
+    pcall(setclipboard, info)
+    warn("[Strawberry Hub] unsupported: " .. info)
+    notify("This game isn't supported yet (" .. info .. "). Info copied. Discord: " .. DISCORD, 15)
     return
 end
 
