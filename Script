@@ -2,61 +2,11 @@ if not game:IsLoaded() then
     game.Loaded:Wait()
 end
 
-local SCRIPTS = {
-    primeval = "https://api.luarmor.net/files/v4/loaders/b8c171b96c2ad3b3c869ae572cb2ca22.lua",
-    sniper = "https://api.luarmor.net/files/v4/loaders/98096e4869522b965b4e94bde2cf4f42.lua",
-    bugevolution = "https://api.luarmor.net/files/v4/loaders/386d315125cf7415d381cf735ec39ecc.lua",
-    homedefense = "https://api.luarmor.net/files/v4/loaders/f15f02bdaac4ad8e23487f8e3fbae549.lua",
-    jurassic = "https://api.luarmor.net/files/v4/loaders/fbfae5030b450af43a6d5a83ae53aff8.lua",
-}
-
-local NAMES = {
-    primeval = "Primeval Earth",
-    sniper = "Sniper Arena",
-    bugevolution = "Bug Evolution",
-    homedefense = "Home Defense",
-    jurassic = "Jurassic Blocky",
-}
-
-local PLACES = {
-    [10696301650] = "primeval",
-    [122446657157717] = "sniper",
-    [90165746516953] = "sniper",
-    [70650894743738] = "bugevolution",
-    [105527962898452] = "homedefense",
-    [11653088948] = "jurassic",
-}
-
-local GAMES = {
-    [9534705677] = "sniper",
-    [10769957062] = "bugevolution",
-    [10769857262] = "homedefense",
-    [4130569984] = "jurassic",
-}
-
--- fallback when a place isn't listed (sub-places, new servers): match the game's name
-local KEYWORDS = {
-    {"primeval", "primeval"},
-    {"sniper arena", "sniper"},
-    {"bug evolution", "bugevolution"},
-    {"home defense", "homedefense"},
-    {"jurassic", "jurassic"},
-}
-
--- games with several places (lobby, matches, event servers): recognise them by what's in the game
-local SIGNATURES = {
-    jurassic = function()
-        local rs = game:GetService("ReplicatedStorage")
-        local ts = rs:FindFirstChild("TS")
-        local config = ts and ts:FindFirstChild("config")
-        return config ~= nil and config:FindFirstChild("dinosaur-stats") ~= nil
-    end,
-}
-
--- universe ids remembered by the hubs themselves (Jurassic Blocky writes its own on first run)
-local SAVED_GAME_IDS = {
-    jurassic = "StrawberryHub/jurassic_gameid.txt",
-}
+-- one script for Sniper Arena, Bug Evolution, Home Defense and Jurassic Blocky (it picks the game itself)
+local ALL_GAMES = "https://api.luarmor.net/files/v4/loaders/bc835159425cc6f0567a7508c803c963.lua"
+-- Primeval Earth (Free) is still its own script
+local PRIMEVAL = "https://api.luarmor.net/files/v4/loaders/b8c171b96c2ad3b3c869ae572cb2ca22.lua"
+local PRIMEVAL_PLACE = 10696301650
 
 local DISCORD = "discord.gg/AH8SRWBxQy"
 
@@ -70,25 +20,12 @@ local function notify(text, duration)
     end)
 end
 
-local function detect()
-    local which = PLACES[game.PlaceId] or GAMES[game.GameId]
-    if which then return which end
-    for key, path in pairs(SAVED_GAME_IDS) do
-        local ok, saved = pcall(function() return isfile(path) and readfile(path) end)
-        if ok and saved and tonumber(saved) == game.GameId then return key end
-    end
-    for key, check in pairs(SIGNATURES) do
-        local ok, match = pcall(check)
-        if ok and match then return key end
-    end
+local function isPrimeval()
+    if game.PlaceId == PRIMEVAL_PLACE then return true end
     local ok, info = pcall(function()
         return game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId)
     end)
-    local name = ok and info and string.lower(tostring(info.Name)) or ""
-    for _, k in ipairs(KEYWORDS) do
-        if string.find(name, k[1], 1, true) then return k[2] end
-    end
-    return nil
+    return ok and info and string.find(string.lower(tostring(info.Name)), "primeval", 1, true) ~= nil
 end
 
 -- game:HttpGet first, then the executor's request function if that fails
@@ -103,27 +40,7 @@ local function fetch(url)
     return nil, tostring(body)
 end
 
--- the game can still be loading its folders (e.g. "Spawning..."): retry for a few seconds
-local which = detect()
-local tries = 0
-while not which and tries < 10 do
-    task.wait(1)
-    tries = tries + 1
-    which = detect()
-end
-local url = which and SCRIPTS[which]
-if not url then
-    -- show + copy the ids so a missing place can be added right away
-    local gameName = "?"
-    pcall(function() gameName = game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name end)
-    local info = string.format("PlaceId %d | GameId %d | %s", game.PlaceId, game.GameId, gameName)
-    pcall(setclipboard, info)
-    warn("[Strawberry Hub] unsupported: " .. info)
-    notify("This game isn't supported yet (" .. info .. "). Info copied. Discord: " .. DISCORD, 15)
-    return
-end
-
-notify("Loading " .. NAMES[which] .. "...", 4)
+local url = isPrimeval() and PRIMEVAL or ALL_GAMES
 
 local src, httpErr = fetch(url)
 if not src then
