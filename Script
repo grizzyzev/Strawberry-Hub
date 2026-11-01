@@ -6,12 +6,14 @@ local SCRIPTS = {
     primeval = "https://api.luarmor.net/files/v4/loaders/b8c171b96c2ad3b3c869ae572cb2ca22.lua",
     sniper = "https://api.luarmor.net/files/v4/loaders/98096e4869522b965b4e94bde2cf4f42.lua",
     bugevolution = "https://api.luarmor.net/files/v4/loaders/386d315125cf7415d381cf735ec39ecc.lua",
+    homedefense = "https://api.luarmor.net/files/v4/loaders/f15f02bdaac4ad8e23487f8e3fbae549.lua",
 }
 
 local NAMES = {
     primeval = "Primeval Earth",
     sniper = "Sniper Arena",
     bugevolution = "Bug Evolution",
+    homedefense = "Home Defense",
 }
 
 local PLACES = {
@@ -19,11 +21,13 @@ local PLACES = {
     [122446657157717] = "sniper",
     [90165746516953] = "sniper",
     [70650894743738] = "bugevolution",
+    [105527962898452] = "homedefense",
 }
 
 local GAMES = {
     [9534705677] = "sniper",
     [10769957062] = "bugevolution",
+    [10769857262] = "homedefense",
 }
 
 -- fallback when a place isn't listed (sub-places, new servers): match the game's name
@@ -31,6 +35,7 @@ local KEYWORDS = {
     {"primeval", "primeval"},
     {"sniper arena", "sniper"},
     {"bug evolution", "bugevolution"},
+    {"home defense", "homedefense"},
 }
 
 local DISCORD = "discord.gg/AH8SRWBxQy"
